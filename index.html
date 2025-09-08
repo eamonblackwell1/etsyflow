@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Nano Banana Image Processor</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>Nano Banana Image Processor</h1>
+        </header>
+        
+        <div class="upload-section">
+            <div class="upload-area" id="uploadArea">
+                <p>Drag & drop images here or click to select</p>
+                <input type="file" id="fileInput" multiple accept="image/*" hidden>
+            </div>
+            
+            <div class="prompt-section">
+                <input type="text" id="promptInput" placeholder="Enter your prompt for image processing">
+                <button id="processBtn" disabled>Process All Images</button>
+            </div>
+            
+            <div class="progress-section">
+                <div class="overall-progress" id="overallProgress" style="display: none;">
+                    <span id="progressText">Processing 0 of 0 images...</span>
+                    <div class="progress-bar">
+                        <div class="progress-fill" id="progressFill"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <div class="images-grid" id="imagesGrid">
+            <!-- Image cards will be dynamically added here -->
+        </div>
+    </div>
+    
+    <script src="script.js"></script>
+</body>
+</html>
