@@ -151,6 +151,42 @@ header h1 {
     color: #388e3c;
 }
 
+.status-gemini_processing {
+    background-color: #f3e5f5;
+    color: #7b1fa2;
+}
+
+.status-gemini_complete {
+    background-color: #e1f5fe;
+    color: #0277bd;
+}
+
+.status-removing_background {
+    background-color: #fce4ec;
+    color: #c2185b;
+}
+
+.status-upscaling_image {
+    background-color: #e0f2f1;
+    color: #00695c;
+}
+
+.status-pipeline_complete {
+    background-color: #e8f5e8;
+    color: #2e7d32;
+    font-weight: bold;
+}
+
+.status-partial_pipeline_success {
+    background-color: #fff8e1;
+    color: #f57f17;
+}
+
+.status-picsart_failed_fallback {
+    background-color: #ffeaa7;
+    color: #d68910;
+}
+
 .status-error {
     background-color: #ffebee;
     color: #d32f2f;
@@ -158,9 +194,34 @@ header h1 {
 
 .image-actions {
     display: flex;
+    flex-direction: column;
     gap: 10px;
-    justify-content: center;
     margin-top: 10px;
+}
+
+.download-buttons {
+    display: flex;
+    gap: 8px;
+    justify-content: center;
+}
+
+.btn-accent {
+    background-color: #6f42c1;
+    color: white;
+    border: none;
+    padding: 8px 16px;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 14px;
+}
+
+.btn-accent:disabled {
+    background-color: #ccc;
+    cursor: not-allowed;
+}
+
+.btn-accent:hover:not(:disabled) {
+    background-color: #5a32a3;
 }
 
 .btn {

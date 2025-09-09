@@ -9,7 +9,12 @@
       "Bash(npm start)",
       "WebSearch",
       "WebFetch(domain:developers.googleblog.com)",
-      "Bash(chmod:*)"
+      "Bash(chmod:*)",
+      "WebFetch(domain:docs.picsart.io)",
+      "Bash(node:*)",
+      "Bash(curl:*)",
+      "Bash(lsof:*)",
+      "Bash(killall:*)"
     ],
     "deny": [],
     "ask": []

@@ -12,12 +12,16 @@ require('dotenv').config();
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// Gemini API key (required)
+// API keys (required)
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
+const PICSART_API_KEY = process.env.PICSART_API_KEY;
 
 function assertApiKey() {
 	if (!GEMINI_API_KEY || GEMINI_API_KEY.trim() === '') {
 		throw new Error('GEMINI_API_KEY environment variable is not set');
+	}
+	if (!PICSART_API_KEY || PICSART_API_KEY.trim() === '') {
+		throw new Error('PICSART_API_KEY environment variable is not set');
 	}
 }
 
@@ -129,8 +133,49 @@ app.get('/api/job/:jobId', (req, res) => {
         createdAt: job.createdAt
     };
 
-    if (job.status === 'complete' && job.processedPath) {
+    // Add lastUpdated if available
+    if (job.lastUpdated) {
+        response.lastUpdated = job.lastUpdated;
+    }
+
+    // Add processing stage information
+    const completedStatuses = ['complete', 'pipeline_complete', 'partial_pipeline_success', 'picsart_failed_fallback'];
+    if (completedStatuses.includes(job.status) && job.processedPath) {
         response.processedUrl = `/api/download/${job.jobId}`;
+    }
+
+    // Add Gemini download URL if available
+    if (job.geminiDownloadPath) {
+        response.geminiUrl = `/api/download-gemini/${job.jobId}`;
+    }
+
+    // Add progress information based on status
+    switch (job.status) {
+        case 'processing':
+        case 'gemini_processing':
+            response.progress = 'Generating design with AI...';
+            break;
+        case 'gemini_complete':
+            response.progress = 'AI design complete, removing background...';
+            break;
+        case 'removing_background':
+            response.progress = 'Removing background...';
+            break;
+        case 'upscaling_image':
+            response.progress = 'Upscaling image for high quality...';
+            break;
+        case 'pipeline_complete':
+            response.progress = 'Processing complete!';
+            break;
+        case 'partial_pipeline_success':
+            response.progress = 'Processing complete (partial enhancement)';
+            break;
+        case 'picsart_failed_fallback':
+            response.progress = 'Processing complete (using fallback)';
+            break;
+        case 'complete':
+            response.progress = 'Complete!';
+            break;
     }
 
     if (job.status === 'error') {
@@ -140,10 +185,63 @@ app.get('/api/job/:jobId', (req, res) => {
     res.json(response);
 });
 
-// Download processed image
+// Download Gemini-only processed image
+app.get('/api/download-gemini/:jobId', async (req, res) => {
+    const job = processingJobs.get(req.params.jobId);
+    if (!job || !job.geminiDownloadPath) {
+        return res.status(404).json({ error: 'Gemini image not found' });
+    }
+
+    if (!fs.existsSync(job.geminiDownloadPath)) {
+        return res.status(404).json({ error: 'File not found on disk' });
+    }
+
+    const requestedFormatRaw = (req.query.format || '').toString().toLowerCase();
+    const requestedFormat = ['jpg', 'jpeg', 'png'].includes(requestedFormatRaw) ? requestedFormatRaw : null;
+
+    // If no conversion requested, stream the file inline for preview
+    if (!requestedFormat) {
+        return res.sendFile(path.resolve(job.geminiDownloadPath));
+    }
+
+    try {
+        // Read source buffer and convert format
+        const sourceBuffer = fs.readFileSync(job.geminiDownloadPath);
+        let transformer = sharp(sourceBuffer);
+
+        if (requestedFormat === 'png') {
+            transformer = transformer.png({ compressionLevel: 9 });
+        } else {
+            // Flatten transparency onto white to avoid black backgrounds in JPEG
+            transformer = transformer
+                .flatten({ background: { r: 255, g: 255, b: 255 } })
+                .jpeg({ quality: 92, mozjpeg: true });
+        }
+
+        const outputBuffer = await transformer.toBuffer();
+
+        const baseName = path.basename(job.originalName, path.extname(job.originalName));
+        const outName = `gemini_${baseName}.${requestedFormat === 'jpeg' ? 'jpg' : requestedFormat}`;
+        const mime = requestedFormat === 'png' ? 'image/png' : 'image/jpeg';
+
+        res.setHeader('Content-Type', mime);
+        res.setHeader('Content-Disposition', `attachment; filename="${outName}"`);
+        return res.send(outputBuffer);
+    } catch (err) {
+        console.error('Gemini download conversion error:', err);
+        // Fallback to raw download with actual extension
+        const actualExt = path.extname(job.geminiDownloadPath) || '.png';
+        const baseName = path.basename(job.originalName, path.extname(job.originalName));
+        const filename = `gemini_${baseName}${actualExt}`;
+        return res.download(job.geminiDownloadPath, filename);
+    }
+});
+
+// Download final processed image (with Picsart enhancements if successful)
 app.get('/api/download/:jobId', async (req, res) => {
     const job = processingJobs.get(req.params.jobId);
-    if (!job || job.status !== 'complete' || !job.processedPath) {
+    const completedStatuses = ['complete', 'pipeline_complete', 'partial_pipeline_success', 'picsart_failed_fallback'];
+    if (!job || !completedStatuses.includes(job.status) || !job.processedPath) {
         return res.status(404).json({ error: 'Processed image not found' });
     }
 
@@ -154,10 +252,9 @@ app.get('/api/download/:jobId', async (req, res) => {
     const requestedFormatRaw = (req.query.format || '').toString().toLowerCase();
     const requestedFormat = ['jpg', 'jpeg', 'png'].includes(requestedFormatRaw) ? requestedFormatRaw : null;
 
-    // If no conversion requested, stream the file as-is
+    // If no conversion requested, stream the file inline for preview
     if (!requestedFormat) {
-        const filename = `processed_${job.originalName}`;
-        return res.download(job.processedPath, filename);
+        return res.sendFile(path.resolve(job.processedPath));
     }
 
     try {
@@ -169,8 +266,10 @@ app.get('/api/download/:jobId', async (req, res) => {
         if (requestedFormat === 'png') {
             transformer = transformer.png({ compressionLevel: 9 });
         } else {
-            // treat jpg and jpeg the same
-            transformer = transformer.jpeg({ quality: 92, mozjpeg: true });
+            // treat jpg and jpeg the same; flatten transparency to white for JPEG
+            transformer = transformer
+                .flatten({ background: { r: 255, g: 255, b: 255 } })
+                .jpeg({ quality: 92, mozjpeg: true });
         }
 
         const outputBuffer = await transformer.toBuffer();
@@ -184,8 +283,10 @@ app.get('/api/download/:jobId', async (req, res) => {
         return res.send(outputBuffer);
     } catch (err) {
         console.error('Download conversion error:', err);
-        // Fallback to raw download
-        const filename = `processed_${job.originalName}`;
+        // Fallback to raw download with actual extension
+        const actualExt = path.extname(job.processedPath) || '.png';
+        const baseName = path.basename(job.originalName, path.extname(job.originalName));
+        const filename = `processed_${baseName}${actualExt}`;
         return res.download(job.processedPath, filename);
     }
 });
@@ -249,9 +350,25 @@ function generateJobId() {
     return 'job_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
 }
 
+function updateJobStatus(jobId, status, additionalData = {}) {
+    const job = processingJobs.get(jobId);
+    if (job) {
+        job.status = status;
+        job.lastUpdated = new Date();
+        
+        // Add any additional data (like intermediate paths, progress, etc.)
+        Object.assign(job, additionalData);
+        
+        console.log(`Job ${jobId} status updated to: ${status}`);
+    }
+}
+
 async function processImageWithNanoBanana(imageData) {
     try {
         console.log(`Processing image: ${imageData.originalName} with prompt: "${imageData.prompt}"`);
+        
+        // Update status to Gemini processing
+        updateJobStatus(imageData.jobId, 'gemini_processing');
         
         // Read the image file and convert to base64
         const imageBuffer = fs.readFileSync(imageData.originalPath);
@@ -316,10 +433,9 @@ async function processImageWithNanoBanana(imageData) {
                 fs.mkdirSync(processedDir);
             }
 
-            // Save the generated image as PNG to ensure consistent format
-            // The download endpoint will handle conversion to other formats
-            const processedFilename = `processed_${Date.now()}_${path.basename(imageData.originalPath, path.extname(imageData.originalPath))}.png`;
-            const processedPath = path.join(processedDir, processedFilename);
+            // Save the Gemini-generated image as PNG
+            const geminiFilename = `gemini_${Date.now()}_${path.basename(imageData.originalPath, path.extname(imageData.originalPath))}.png`;
+            const geminiPath = path.join(processedDir, geminiFilename);
             const outputBuffer = Buffer.from(generatedImageData, 'base64');
             
             // Convert to PNG format using sharp to ensure consistency
@@ -327,10 +443,67 @@ async function processImageWithNanoBanana(imageData) {
                 .png({ compressionLevel: 9 })
                 .toBuffer();
             
-            fs.writeFileSync(processedPath, pngBuffer);
+            fs.writeFileSync(geminiPath, pngBuffer);
+            console.log(`Gemini image generated and saved: ${geminiPath}`);
             
-            console.log(`Image successfully generated and saved: ${processedPath}`);
-            return { processedPath };
+            // Update status: Gemini complete, starting Picsart processing
+            updateJobStatus(imageData.jobId, 'gemini_complete', { geminiPath, geminiDownloadPath: geminiPath });
+            
+            // Process with Picsart pipeline: Background Removal → Upscaling
+            let finalProcessedPath = geminiPath;
+            let bgRemovedPath = null;
+            let pipelineErrors = [];
+            
+            // Step 1: Remove background using Picsart
+            try {
+                updateJobStatus(imageData.jobId, 'removing_background');
+                bgRemovedPath = await processPicsartBackgroundRemoval(geminiPath);
+                finalProcessedPath = bgRemovedPath;
+                console.log('Background removal successful');
+            } catch (bgError) {
+                console.error('Background removal failed:', bgError.message);
+                pipelineErrors.push(`Background removal: ${bgError.message}`);
+                // Continue with original Gemini image
+                bgRemovedPath = geminiPath;
+                finalProcessedPath = geminiPath;
+            }
+            
+            // Step 2: Upscale the image using Picsart (use whichever image we have)
+            try {
+                updateJobStatus(imageData.jobId, 'upscaling_image');
+                const upscaledPath = await processPicsartUpscaling(finalProcessedPath, 2);
+                
+                // Clean up intermediate files only if upscaling succeeded
+                if (bgRemovedPath && bgRemovedPath !== geminiPath && fs.existsSync(bgRemovedPath)) {
+                    fs.unlinkSync(bgRemovedPath);
+                }
+                // Keep the Gemini PNG for AI-only downloads
+                
+                finalProcessedPath = upscaledPath;
+                console.log('Upscaling successful');
+            } catch (upscaleError) {
+                console.error('Upscaling failed:', upscaleError.message);
+                pipelineErrors.push(`Upscaling: ${upscaleError.message}`);
+                // Keep the current path (either bg-removed or original Gemini)
+            }
+            
+            // Update final status based on what succeeded
+            if (pipelineErrors.length === 0) {
+                console.log(`Complete pipeline processing finished: ${finalProcessedPath}`);
+                updateJobStatus(imageData.jobId, 'pipeline_complete');
+            } else if (pipelineErrors.length === 1) {
+                console.log(`Partial pipeline success with fallback: ${finalProcessedPath}`);
+                updateJobStatus(imageData.jobId, 'partial_pipeline_success', { 
+                    pipelineErrors: pipelineErrors 
+                });
+            } else {
+                console.log(`Pipeline failed, using Gemini output: ${finalProcessedPath}`);
+                updateJobStatus(imageData.jobId, 'picsart_failed_fallback', { 
+                    pipelineErrors: pipelineErrors 
+                });
+            }
+            
+            return { processedPath: finalProcessedPath };
             
         } else {
             // If no image is generated, check for text response
@@ -366,6 +539,169 @@ function getMimeType(filePath) {
     return mimeTypes[ext] || 'image/jpeg';
 }
 
+async function processPicsartBackgroundRemoval(imagePath) {
+    try {
+        console.log(`Removing background from: ${imagePath}`);
+        
+        // Create form data for file upload - minimal parameters to avoid API errors
+        const form = new FormData();
+        form.append('image', fs.createReadStream(imagePath));
+        
+        const response = await axios.post('https://api.picsart.io/tools/1.0/removebg', form, {
+            headers: {
+                'X-Picsart-API-Key': PICSART_API_KEY,
+                'accept': 'application/json',
+                ...form.getHeaders()
+            }
+        });
+        
+        console.log('Picsart background removal response:', response.data);
+        
+        // Save the processed image with background removed
+        const processedDir = './processed';
+        if (!fs.existsSync(processedDir)) {
+            fs.mkdirSync(processedDir);
+        }
+        
+        const filename = `bg_removed_${Date.now()}_${path.basename(imagePath)}`;
+        const outputPath = path.join(processedDir, filename);
+        
+        // Check if response contains an image URL instead of raw image data
+        if (response.data && response.data.data && response.data.data.url) {
+            // Download the image from the URL
+            const imageResponse = await axios.get(response.data.data.url, {
+                responseType: 'arraybuffer'
+            });
+            
+            // Convert to PNG using sharp to ensure consistency
+            const pngBuffer = await sharp(Buffer.from(imageResponse.data))
+                .png({ compressionLevel: 9 })
+                .toBuffer();
+                
+            fs.writeFileSync(outputPath, pngBuffer);
+        } else {
+            throw new Error('Unexpected Picsart response format: ' + JSON.stringify(response.data));
+        }
+        
+        console.log(`Background removed successfully: ${outputPath}`);
+        return outputPath;
+        
+    } catch (error) {
+        console.error('Picsart background removal error:', error);
+        
+        // Provide more specific error information for debugging
+        let errorMessage = 'Background removal failed';
+        if (error.response) {
+            // HTTP error response from API
+            errorMessage += ` (HTTP ${error.response.status})`;
+            if (error.response.data) {
+                console.error('API Error Response:', error.response.data);
+                // Decode buffer if it's a buffer
+                if (Buffer.isBuffer(error.response.data)) {
+                    const errorText = error.response.data.toString('utf8');
+                    console.error('Decoded API Error:', errorText);
+                    try {
+                        const errorJson = JSON.parse(errorText);
+                        if (errorJson.detail) {
+                            errorMessage += `: ${errorJson.detail}`;
+                        }
+                    } catch (parseError) {
+                        console.error('Could not parse error JSON:', parseError);
+                    }
+                }
+            }
+        } else if (error.code === 'ECONNREFUSED' || error.code === 'ENOTFOUND') {
+            errorMessage += ': Network connection failed';
+        } else if (error.message) {
+            errorMessage += `: ${error.message}`;
+        }
+        
+        throw new Error(errorMessage);
+    }
+}
+
+async function processPicsartUpscaling(imagePath, upscaleFactor = 2) {
+    try {
+        console.log(`Upscaling image: ${imagePath} with factor ${upscaleFactor}`);
+        
+        // Create form data for file upload - minimal parameters
+        const form = new FormData();
+        form.append('image', fs.createReadStream(imagePath));
+        form.append('upscale_factor', upscaleFactor.toString());
+        
+        const response = await axios.post('https://api.picsart.io/tools/1.0/upscale', form, {
+            headers: {
+                'X-Picsart-API-Key': PICSART_API_KEY,
+                'accept': 'application/json',
+                ...form.getHeaders()
+            }
+        });
+        
+        console.log('Picsart upscaling response:', response.data);
+        
+        // Save the upscaled image
+        const processedDir = './processed';
+        if (!fs.existsSync(processedDir)) {
+            fs.mkdirSync(processedDir);
+        }
+        
+        const filename = `upscaled_${Date.now()}_${path.basename(imagePath)}`;
+        const outputPath = path.join(processedDir, filename);
+        
+        // Check if response contains an image URL instead of raw image data
+        if (response.data && response.data.data && response.data.data.url) {
+            // Download the image from the URL
+            const imageResponse = await axios.get(response.data.data.url, {
+                responseType: 'arraybuffer'
+            });
+            
+            // Convert to PNG using sharp to ensure consistency
+            const pngBuffer = await sharp(Buffer.from(imageResponse.data))
+                .png({ compressionLevel: 9 })
+                .toBuffer();
+                
+            fs.writeFileSync(outputPath, pngBuffer);
+        } else {
+            throw new Error('Unexpected Picsart response format: ' + JSON.stringify(response.data));
+        }
+        
+        console.log(`Image upscaled successfully: ${outputPath}`);
+        return outputPath;
+        
+    } catch (error) {
+        console.error('Picsart upscaling error:', error);
+        
+        // Provide more specific error information for debugging
+        let errorMessage = 'Image upscaling failed';
+        if (error.response) {
+            // HTTP error response from API
+            errorMessage += ` (HTTP ${error.response.status})`;
+            if (error.response.data) {
+                console.error('API Error Response:', error.response.data);
+                // Decode buffer if it's a buffer
+                if (Buffer.isBuffer(error.response.data)) {
+                    const errorText = error.response.data.toString('utf8');
+                    console.error('Decoded API Error:', errorText);
+                    try {
+                        const errorJson = JSON.parse(errorText);
+                        if (errorJson.detail) {
+                            errorMessage += `: ${errorJson.detail}`;
+                        }
+                    } catch (parseError) {
+                        console.error('Could not parse error JSON:', parseError);
+                    }
+                }
+            }
+        } else if (error.code === 'ECONNREFUSED' || error.code === 'ENOTFOUND') {
+            errorMessage += ': Network connection failed';
+        } else if (error.message) {
+            errorMessage += `: ${error.message}`;
+        }
+        
+        throw new Error(errorMessage);
+    }
+}
+
 // TODO: Implement actual nano banana API integration
 async function callNanoBananaAPI(imagePath, prompt) {
     // This is where you'll integrate with Google's nano banana API
@@ -395,6 +731,11 @@ app.listen(PORT, () => {
         console.warn('Warning: GEMINI_API_KEY is not set. Requests will fail until it is provided.');
     } else {
         console.log('GEMINI_API_KEY detected. Using Gemini API (REST) for image generation.');
+    }
+    if (!PICSART_API_KEY) {
+        console.warn('Warning: PICSART_API_KEY is not set. Background removal and upscaling will fail until it is provided.');
+    } else {
+        console.log('PICSART_API_KEY detected. Using Picsart API for background removal and upscaling.');
     }
 });
 

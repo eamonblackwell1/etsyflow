@@ -125,9 +125,14 @@ class ImageProcessor {
                 <button class="btn btn-secondary" onclick="imageProcessor.repromptImage('${imageData.id}')" disabled>
                     Reprompt
                 </button>
-                <button class="btn btn-primary" onclick="imageProcessor.downloadImage('${imageData.id}')" disabled>
-                    Download
-                </button>
+                <div class="download-buttons">
+                    <button class="btn btn-accent" onclick="imageProcessor.downloadGeminiImage('${imageData.id}')" disabled id="download_gemini_${imageData.id}">
+                        Download AI Only
+                    </button>
+                    <button class="btn btn-primary" onclick="imageProcessor.downloadImage('${imageData.id}')" disabled id="download_final_${imageData.id}">
+                        Download Enhanced
+                    </button>
+                </div>
             </div>
         `;
 
@@ -157,10 +162,28 @@ class ImageProcessor {
         // Update button states
         const repromptBtn = card.querySelector('.btn-secondary');
         const downloadBtn = card.querySelector('.btn-primary');
+        const downloadGeminiBtn = document.getElementById(`download_gemini_${imageData.id}`);
+        const downloadFinalBtn = document.getElementById(`download_final_${imageData.id}`);
         
         if (repromptBtn && downloadBtn) {
-            repromptBtn.disabled = imageData.status !== 'complete';
-            downloadBtn.disabled = imageData.status !== 'complete';
+            // Enable buttons for all completion statuses
+            const completedStatuses = ['complete', 'pipeline_complete', 'partial_pipeline_success', 'picsart_failed_fallback'];
+            const isComplete = completedStatuses.includes(imageData.status);
+            repromptBtn.disabled = !isComplete;
+            downloadBtn.disabled = !isComplete;
+        }
+
+        // Update download button states
+        if (downloadGeminiBtn) {
+            // Enable Gemini download if we have gemini_complete status or better
+            const geminiStatuses = ['gemini_complete', 'removing_background', 'upscaling_image', 'complete', 'pipeline_complete', 'partial_pipeline_success', 'picsart_failed_fallback'];
+            downloadGeminiBtn.disabled = !geminiStatuses.includes(imageData.status);
+        }
+
+        if (downloadFinalBtn) {
+            // Enable final download only when completely done
+            const completedStatuses = ['complete', 'pipeline_complete', 'partial_pipeline_success', 'picsart_failed_fallback'];
+            downloadFinalBtn.disabled = !completedStatuses.includes(imageData.status);
         }
     }
 
@@ -168,7 +191,14 @@ class ImageProcessor {
         const statusMap = {
             'queued': 'Queued',
             'processing': 'Processing...',
+            'gemini_processing': 'Generating design...',
+            'gemini_complete': 'AI complete, removing background...',
+            'removing_background': 'Removing background...',
+            'upscaling_image': 'Upscaling image...',
             'complete': 'Complete',
+            'pipeline_complete': 'Complete (Enhanced)',
+            'partial_pipeline_success': 'Complete (Partial enhancement)',
+            'picsart_failed_fallback': 'Complete (AI only)',
             'error': 'Error'
         };
         return statusMap[status] || status;
@@ -195,7 +225,9 @@ class ImageProcessor {
         let completedCount = 0;
 
         for (const imageData of this.images) {
-            if (imageData.status === 'complete') {
+            // Check if already complete with any of the completion statuses
+            const completedStatuses = ['complete', 'pipeline_complete', 'partial_pipeline_success', 'picsart_failed_fallback'];
+            if (completedStatuses.includes(imageData.status)) {
                 completedCount++;
                 continue;
             }
@@ -205,9 +237,9 @@ class ImageProcessor {
             this.updateImageCard(imageData);
 
             try {
-                // Simulate API call for now - replace with actual nano banana API call
+                // Process image through the pipeline
                 await this.processImage(imageData);
-                imageData.status = 'complete';
+                // Status is already set by processImage based on the pipeline result
             } catch (error) {
                 console.error('Processing failed:', error);
                 imageData.status = 'error';
@@ -253,6 +285,7 @@ class ImageProcessor {
     async pollJobStatus(imageData) {
         const maxAttempts = 60; // 5 minutes max
         let attempts = 0;
+        const getStatusText = this.getStatusText.bind(this);
 
         return new Promise((resolve, reject) => {
             const checkStatus = async () => {
@@ -266,14 +299,36 @@ class ImageProcessor {
 
                     const job = await response.json();
                     
-                    if (job.status === 'complete') {
+                    // Check for all possible completion statuses from the pipeline
+                    const completedStatuses = ['complete', 'pipeline_complete', 'partial_pipeline_success', 'picsart_failed_fallback'];
+                    if (completedStatuses.includes(job.status)) {
                         imageData.processedUrl = job.processedUrl;
+                        imageData.status = job.status; // Set the actual final status
+                        imageData.progress = job.progress;
                         resolve();
                         return;
                     }
                     
                     if (job.status === 'error') {
                         throw new Error(job.error || 'Processing failed');
+                    }
+                    
+                    // Update progress message and status for intermediate stages
+                    if (job.status !== imageData.status) {
+                        imageData.status = job.status;
+                        console.log(`Job ${imageData.jobId}: Status updated to ${job.status}`);
+                        
+                        // Update the visual status immediately
+                        const statusElement = document.getElementById(`status_${imageData.id}`);
+                        if (statusElement) {
+                            statusElement.textContent = getStatusText(job.status);
+                            statusElement.className = `image-status status-${job.status}`;
+                        }
+                    }
+                    
+                    // Update progress message if available
+                    if (job.progress) {
+                        console.log(`Job ${imageData.jobId}: ${job.progress}`);
                     }
 
                     if (attempts >= maxAttempts) {
@@ -316,7 +371,7 @@ class ImageProcessor {
             try {
                 // Process single image with new prompt
                 await this.processImage(imageData);
-                imageData.status = 'complete';
+                // Status is already set by processImage based on the pipeline result
                 this.updateImageCard(imageData);
             } catch (error) {
                 console.error('Reprompt failed:', error);
@@ -338,7 +393,25 @@ class ImageProcessor {
 
         // Suggest a filename with the selected extension
         const baseName = (imageData.name || 'image').replace(/\.[^/.]+$/, '');
-        link.download = `processed_${baseName}.${requestedFormat}`;
+        link.download = `enhanced_${baseName}.${requestedFormat}`;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+    }
+
+    downloadGeminiImage(imageId) {
+        const imageData = this.images.find(img => img.id === imageId);
+        if (!imageData || !imageData.jobId) return;
+
+        // Use the Gemini-only download endpoint
+        const link = document.createElement('a');
+        const formatSelect = document.getElementById(`format_${imageId}`);
+        const requestedFormat = formatSelect ? (formatSelect.value || 'jpg') : 'jpg';
+        link.href = `/api/download-gemini/${imageData.jobId}?format=${encodeURIComponent(requestedFormat)}`;
+
+        // Suggest a filename with the selected extension
+        const baseName = (imageData.name || 'image').replace(/\.[^/.]+$/, '');
+        link.download = `ai_only_${baseName}.${requestedFormat}`;
         document.body.appendChild(link);
         link.click();
         document.body.removeChild(link);

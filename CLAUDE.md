@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-This is a web application for bulk processing images using Google's Gemini AI API (previously referred to as "nano banana"). It's designed for Etsy sellers to generate apparel-ready designs from inspiration images.
+This is a web application for bulk processing images using Google's Gemini AI API and Picsart API integration. It's designed for Etsy sellers to generate high-quality apparel-ready designs from inspiration images through a multi-stage processing pipeline.
 
 ## Key Architecture
 
@@ -15,10 +15,14 @@ This is a web application for bulk processing images using Google's Gemini AI AP
 4. **Download Pipeline**: Processed images are stored as PNG, converted to requested format on download
 
 ### Image Processing Pipeline
-1. Images uploaded to `./uploads/` directory
-2. Gemini API called with strict prompts to generate apparel designs (transparent backgrounds, no text)
-3. Results saved as PNG in `./processed/` directory
-4. Format conversion happens at download time using Sharp library
+1. **Upload**: Images uploaded to `./uploads/` directory (10MB limit)
+2. **Gemini Processing**: AI generates apparel designs using strict prompt engineering (transparent backgrounds, no text)
+3. **Background Removal**: Picsart API removes/refines background for cleaner results
+4. **Upscaling**: Picsart API upscales images for high-quality output
+5. **Storage**: All processed images saved as PNG in `./processed/` directory
+6. **Download**: Format conversion (JPG/PNG) happens on-demand using Sharp library
+
+The pipeline gracefully handles failures - if Picsart steps fail, it falls back to Gemini-only output.
 
 ## Development Commands
 
@@ -37,30 +41,55 @@ npm run dev
 
 ## Critical Implementation Details
 
-### Gemini API Integration (server.js:252-346)
-- Uses REST API directly (v1beta endpoint) instead of SDK
-- Enforces design constraints via prompt engineering (lines 263-276)
+### Gemini API Integration (server.js:358-521)
+- Uses REST API directly (v1beta endpoint) instead of SDK for reliability
+- Enforces design constraints via strict prompt engineering (lines 372-384)
 - Always saves processed images as PNG internally for consistency
 - Requires GEMINI_API_KEY environment variable
 
-### Format Conversion (server.js:143-191)
-- Download endpoint handles JPG/JPEG/PNG conversion on-the-fly
-- Uses Sharp library for image format conversion
+### Picsart API Integration (server.js:536-697)
+- Background removal using `/tools/1.0/removebg` endpoint
+- Image upscaling using `/tools/1.0/upscale` endpoint with 2x factor
+- Graceful error handling with fallback to Gemini-only output
+- Requires PICSART_API_KEY environment variable
+
+### Format Conversion & Downloads (server.js:188-284)
+- Two download endpoints: `/api/download-gemini/` (AI-only) and `/api/download/` (enhanced)
+- On-the-fly format conversion (JPG/PNG) using Sharp library
 - Preserves original filename with new extension
 
-### Job Management
-- In-memory job tracking using Map (processingJobs)
-- Polling-based status checks with 5-second intervals
-- Maximum 5-minute timeout for processing
+### Job Management & Status Tracking
+- In-memory job tracking using Map (processingJobs) - resets on server restart
+- Detailed status tracking: `gemini_processing` → `gemini_complete` → `removing_background` → `upscaling_image` → `pipeline_complete`
+- Client-side polling every 5 seconds with 5-minute timeout
+- Multiple completion states: `pipeline_complete`, `partial_pipeline_success`, `picsart_failed_fallback`
 
 ## Environment Configuration
 
-Required environment variable:
-- `GEMINI_API_KEY`: Google Gemini API key for image generation
+Required environment variables:
+- `GEMINI_API_KEY`: Google Gemini API key for AI image generation
+- `PICSART_API_KEY`: Picsart API key for background removal and upscaling
+
+Both APIs have usage limits and costs - monitor usage accordingly.
 
 ## Known Issues & Constraints
 
-- 10MB file size limit per image
-- No persistent storage - jobs lost on server restart
-- Gemini adds SynthID watermarks to generated images
-- Processing time varies based on image complexity
+- 10MB file size limit per image upload
+- No persistent storage - jobs and processing state lost on server restart
+- Gemini adds SynthID watermarks to generated images (unavoidable)
+- Processing time varies based on image complexity (typically 30-120 seconds)
+- Picsart API calls may fail - application gracefully falls back to Gemini-only output
+- All processed images stored locally in `./processed/` directory (manual cleanup required)
+
+## File Structure
+
+```
+├── server.js          # Express server with API endpoints
+├── script.js          # Frontend JavaScript (ImageProcessor class)
+├── index.html         # Main UI
+├── styles.css         # UI styling with status indicators
+├── package.json       # Dependencies and scripts
+├── uploads/           # Temporary storage for uploaded images
+├── processed/         # Final processed images (PNG format)
+└── .env              # Environment variables (API keys)
+```
