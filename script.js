@@ -15,6 +15,15 @@ class ImageProcessor {
         const fileInput = document.getElementById('fileInput');
         const promptInput = document.getElementById('promptInput');
         const processBtn = document.getElementById('processBtn');
+        const removeBgToggle = document.getElementById('removeBgToggle');
+
+        // Background removal preference (defaults to checked)
+        this.removeBg = removeBgToggle ? removeBgToggle.checked : true;
+        if (removeBgToggle) {
+            removeBgToggle.addEventListener('change', (e) => {
+                this.removeBg = !!e.target.checked;
+            });
+        }
 
         // Click to select files
         uploadArea.addEventListener('click', () => fileInput.click());
@@ -187,12 +196,12 @@ class ImageProcessor {
         }
     }
 
-    getStatusText(status) {
+    getStatusText(status, job) {
         const statusMap = {
             'queued': 'Queued',
             'processing': 'Processing...',
             'gemini_processing': 'Generating design...',
-            'gemini_complete': 'AI complete, removing background...',
+            'gemini_complete': (job && job.progress) ? job.progress : 'AI complete, removing background...',
             'removing_background': 'Removing background...',
             'upscaling_image': 'Upscaling image...',
             'complete': 'Complete',
@@ -261,6 +270,7 @@ class ImageProcessor {
             const formData = new FormData();
             formData.append('image', imageData.file);
             formData.append('prompt', imageData.prompt);
+            formData.append('removeBg', this.removeBg ? 'true' : 'false');
 
             const response = await fetch('/api/process-image', {
                 method: 'POST',
@@ -321,7 +331,7 @@ class ImageProcessor {
                         // Update the visual status immediately
                         const statusElement = document.getElementById(`status_${imageData.id}`);
                         if (statusElement) {
-                            statusElement.textContent = getStatusText(job.status);
+                            statusElement.textContent = getStatusText(job.status, job);
                             statusElement.className = `image-status status-${job.status}`;
                         }
                     }
@@ -329,6 +339,10 @@ class ImageProcessor {
                     // Update progress message if available
                     if (job.progress) {
                         console.log(`Job ${imageData.jobId}: ${job.progress}`);
+                        const statusElement = document.getElementById(`status_${imageData.id}`);
+                        if (statusElement) {
+                            statusElement.textContent = job.progress;
+                        }
                     }
 
                     if (attempts >= maxAttempts) {

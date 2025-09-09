@@ -16,6 +16,9 @@ const PORT = process.env.PORT || 3000;
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 const PICSART_API_KEY = process.env.PICSART_API_KEY;
 
+// Feature flags
+const ENABLE_BG_REMOVAL = (process.env.ENABLE_BG_REMOVAL || 'true').toLowerCase() !== 'false';
+
 function assertApiKey() {
 	if (!GEMINI_API_KEY || GEMINI_API_KEY.trim() === '') {
 		throw new Error('GEMINI_API_KEY environment variable is not set');
@@ -76,6 +79,8 @@ app.post('/api/process-image', upload.single('image'), async (req, res) => {
         }
 
         const { prompt } = req.body;
+        const removeBgRaw = (req.body.removeBg || '').toString().toLowerCase();
+        const removeBg = removeBgRaw === 'true' || (removeBgRaw === '' && ENABLE_BG_REMOVAL);
         if (!prompt || prompt.trim().length === 0) {
             return res.status(400).json({ error: 'Prompt is required' });
         }
@@ -86,6 +91,7 @@ app.post('/api/process-image', upload.single('image'), async (req, res) => {
             originalPath: req.file.path,
             originalName: req.file.originalname,
             prompt: prompt.trim(),
+            removeBg,
             status: 'processing',
             createdAt: new Date()
         };
@@ -156,7 +162,7 @@ app.get('/api/job/:jobId', (req, res) => {
             response.progress = 'Generating design with AI...';
             break;
         case 'gemini_complete':
-            response.progress = 'AI design complete, removing background...';
+            response.progress = job.removeBg ? 'AI design complete, removing background...' : 'AI design complete, upscaling...';
             break;
         case 'removing_background':
             response.progress = 'Removing background...';
@@ -299,6 +305,8 @@ app.post('/api/process-batch', upload.array('images', 20), async (req, res) => {
         }
 
         const { prompt } = req.body;
+        const removeBgRaw = (req.body.removeBg || '').toString().toLowerCase();
+        const removeBg = removeBgRaw === 'true' || (removeBgRaw === '' && ENABLE_BG_REMOVAL);
         if (!prompt || prompt.trim().length === 0) {
             return res.status(400).json({ error: 'Prompt is required' });
         }
@@ -310,6 +318,7 @@ app.post('/api/process-batch', upload.array('images', 20), async (req, res) => {
                 originalPath: file.path,
                 originalName: file.originalname,
                 prompt: prompt.trim(),
+                removeBg,
                 status: 'processing',
                 createdAt: new Date()
             };
@@ -449,17 +458,23 @@ async function processImageWithNanoBanana(imageData) {
             // Update status: Gemini complete, starting Picsart processing
             updateJobStatus(imageData.jobId, 'gemini_complete', { geminiPath, geminiDownloadPath: geminiPath });
             
-            // Process with Picsart pipeline: Background Removal → Upscaling
+            // Process with Picsart pipeline: Background Removal → Upscaling (background optional per job)
             let finalProcessedPath = geminiPath;
             let bgRemovedPath = null;
             let pipelineErrors = [];
             
             // Step 1: Remove background using Picsart
             try {
-                updateJobStatus(imageData.jobId, 'removing_background');
-                bgRemovedPath = await processPicsartBackgroundRemoval(geminiPath);
-                finalProcessedPath = bgRemovedPath;
-                console.log('Background removal successful');
+                if (imageData.removeBg) {
+                    updateJobStatus(imageData.jobId, 'removing_background');
+                    bgRemovedPath = await processPicsartBackgroundRemoval(geminiPath);
+                    finalProcessedPath = bgRemovedPath;
+                    console.log('Background removal successful');
+                } else {
+                    console.log('Background removal disabled for this job; skipping to upscaling');
+                    bgRemovedPath = geminiPath;
+                    finalProcessedPath = geminiPath;
+                }
             } catch (bgError) {
                 console.error('Background removal failed:', bgError.message);
                 pipelineErrors.push(`Background removal: ${bgError.message}`);
@@ -737,6 +752,7 @@ app.listen(PORT, () => {
     } else {
         console.log('PICSART_API_KEY detected. Using Picsart API for background removal and upscaling.');
     }
+    console.log(`Background removal enabled by default: ${ENABLE_BG_REMOVAL}`);
 });
 
 // Graceful shutdown
