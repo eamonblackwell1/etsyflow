@@ -16,6 +16,54 @@ const PORT = process.env.PORT || 3000;
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 const PICSART_API_KEY = process.env.PICSART_API_KEY;
 
+const STATIC_PROMPT = `Role
+You are an expert conceptual graphic designer. Create a new, original graphic inspired by an uploaded reference image.
+
+Do this silently
+Perform your visual analysis internally and do not output your reasoning.
+
+Internal analysis checklist
+- Subject and key parts
+- Style family and rendering method
+- Composition pattern and silhouette
+- Color relationships and value contrast
+- Mood and era cues
+
+Creative mandate
+Produce a design that feels like a close cousin to the reference, not a sibling. Target a novelty range of about 25 to 35 percent. Keep the same subject category, same broad style family, and same general compositional balance, but change specific details so the result is clearly new.
+
+Required variation
+Make at least 3 meaningful changes across different axes:
+1. Subject pose or angle (stance, head turn, limb position, camera angle)
+2. Feature treatment (line weight, texture pattern, edge quality, detailing density)
+3. Secondary elements (swap or reposition props, foliage, clouds, stars, background motifs)
+4. Composition spacing (scale, spacing, overlap, framing)
+5. Color rewrite (fresh palette with at least two new hues or shifted temperature/value structure)
+6. Stylization tweak (inkier lines, softer grain, halftone, etc.)
+
+Hard constraints
+- Do not trace or replicate shapes, contours, or textures one-to-one
+- Do not reproduce the exact pose, element count/arrangement, or color codes
+- No text, logos, signatures, or watermarks
+- No brand identifiers or copyrighted marks
+
+Target look
+- Same subject type as the reference (bear -> bear, pizza -> pizza)
+- Same composition family, but with altered spacing/feature emphasis for freshness
+- Harmonious, printable palette with clean value separation
+
+Output specs
+- Single, isolated design centered on a pure white background
+- Clear silhouette with large, readable shapes for apparel printing
+- No text, no logos, no watermarks
+- High-resolution raster suitable for print
+
+Quality control self-check
+Before finalizing, compare mentally against the reference: if pose, silhouette, arrangement, and palette feel near-identical, regenerate with larger adjustments.
+
+Deliver
+Generate 1 version that meets the above rules.`;
+
 // Feature flags
 const ENABLE_BG_REMOVAL = (process.env.ENABLE_BG_REMOVAL || 'true').toLowerCase() !== 'false';
 
@@ -86,19 +134,19 @@ app.post('/api/process-image', upload.single('image'), async (req, res) => {
             return res.status(400).json({ error: 'No image file provided' });
         }
 
-        const { prompt } = req.body;
+        const { prompt: incomingPrompt } = req.body;
         const removeBgRaw = (req.body.removeBg || '').toString().toLowerCase();
         const removeBg = removeBgRaw === 'true' || (removeBgRaw === '' && ENABLE_BG_REMOVAL);
-        if (!prompt || prompt.trim().length === 0) {
-            return res.status(400).json({ error: 'Prompt is required' });
-        }
+        const prompt = (incomingPrompt && incomingPrompt.trim().length > 0)
+            ? incomingPrompt.trim()
+            : STATIC_PROMPT;
 
         const jobId = generateJobId();
         const imageData = {
             jobId,
             originalPath: req.file.path,
             originalName: req.file.originalname,
-            prompt: prompt.trim(),
+            prompt,
             removeBg,
             status: 'processing',
             createdAt: new Date()
@@ -312,12 +360,12 @@ app.post('/api/process-batch', upload.array('images', 20), async (req, res) => {
             return res.status(400).json({ error: 'No image files provided' });
         }
 
-        const { prompt } = req.body;
+        const { prompt: incomingPrompt } = req.body;
         const removeBgRaw = (req.body.removeBg || '').toString().toLowerCase();
         const removeBg = removeBgRaw === 'true' || (removeBgRaw === '' && ENABLE_BG_REMOVAL);
-        if (!prompt || prompt.trim().length === 0) {
-            return res.status(400).json({ error: 'Prompt is required' });
-        }
+        const prompt = (incomingPrompt && incomingPrompt.trim().length > 0)
+            ? incomingPrompt.trim()
+            : STATIC_PROMPT;
 
         const jobs = req.files.map(file => {
             const jobId = generateJobId();
@@ -325,7 +373,7 @@ app.post('/api/process-batch', upload.array('images', 20), async (req, res) => {
                 jobId,
                 originalPath: file.path,
                 originalName: file.originalname,
-                prompt: prompt.trim(),
+                prompt,
                 removeBg,
                 status: 'processing',
                 createdAt: new Date()

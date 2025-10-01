@@ -17,12 +17,12 @@ This is a web application for bulk processing images using Google's Gemini AI AP
 ### Image Processing Pipeline
 1. **Upload**: Images uploaded to `./uploads/` directory (10MB limit)
 2. **Gemini Processing**: AI generates apparel designs using strict prompt engineering (transparent backgrounds, no text)
-3. **Background Removal**: Picsart API removes/refines background for cleaner results
+3. **Background Removal** (Optional per job): Picsart API removes/refines background for cleaner results
 4. **Upscaling**: Picsart API upscales images for high-quality output
 5. **Storage**: All processed images saved as PNG in `./processed/` directory
 6. **Download**: Format conversion (JPG/PNG) happens on-demand using Sharp library
 
-The pipeline gracefully handles failures - if Picsart steps fail, it falls back to Gemini-only output.
+The pipeline gracefully handles failures - if Picsart steps fail, it falls back to Gemini-only output. Background removal can be toggled per job via the UI checkbox.
 
 ## Development Commands
 
@@ -60,15 +60,27 @@ npm run dev
 
 ### Job Management & Status Tracking
 - In-memory job tracking using Map (processingJobs) - resets on server restart
-- Detailed status tracking: `gemini_processing` → `gemini_complete` → `removing_background` → `upscaling_image` → `pipeline_complete`
+- Detailed status tracking: `gemini_processing` → `gemini_complete` → (`removing_background` if enabled) → `upscaling_image` → `pipeline_complete`
 - Client-side polling every 5 seconds with 5-minute timeout
 - Multiple completion states: `pipeline_complete`, `partial_pipeline_success`, `picsart_failed_fallback`
+- Per-job `removeBg` flag controls whether background removal step is performed
+
+### Background Removal Toggle Feature
+- UI checkbox "Remove background before upscaling" (unchecked by default)
+- Frontend passes `removeBg` boolean via FormData to server endpoints
+- Server-side `ENABLE_BG_REMOVAL` environment variable sets global default
+- Each job has individual `removeBg` property that overrides global setting
+- Progress messages adapt based on whether background removal is enabled for the job
 
 ## Environment Configuration
 
 Required environment variables:
 - `GEMINI_API_KEY`: Google Gemini API key for AI image generation
 - `PICSART_API_KEY`: Picsart API key for background removal and upscaling
+
+Optional environment variables:
+- `ENABLE_BG_REMOVAL`: Global default for background removal (defaults to `true`)
+- `PORT`: Server port (defaults to 3000)
 
 Both APIs have usage limits and costs - monitor usage accordingly.
 

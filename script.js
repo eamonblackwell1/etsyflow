@@ -17,8 +17,8 @@ class ImageProcessor {
         const processBtn = document.getElementById('processBtn');
         const removeBgToggle = document.getElementById('removeBgToggle');
 
-        // Background removal preference (defaults to checked)
-        this.removeBg = removeBgToggle ? removeBgToggle.checked : true;
+        // Background removal preference (defaults to unchecked)
+        this.removeBg = removeBgToggle ? removeBgToggle.checked : false;
         if (removeBgToggle) {
             removeBgToggle.addEventListener('change', (e) => {
                 this.removeBg = !!e.target.checked;

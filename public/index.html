@@ -26,9 +26,61 @@
             </div>
             
             <div class="prompt-section">
-                <input type="text" id="promptInput" placeholder="Enter your prompt for image processing">
+                <div class="prompt-info">
+                    <p class="prompt-note">Using the standard design brief for every image.</p>
+                    <details class="prompt-details">
+                        <summary>View prompt</summary>
+                        <pre class="prompt-text">Role
+You are an expert conceptual graphic designer. Create a new, original graphic inspired by an uploaded reference image.
+
+Do this silently
+Perform your visual analysis internally and do not output your reasoning.
+
+Internal analysis checklist
+- Subject and key parts
+- Style family and rendering method
+- Composition pattern and silhouette
+- Color relationships and value contrast
+- Mood and era cues
+
+Creative mandate
+Produce a design that feels like a close cousin to the reference, not a sibling. Target a novelty range of about 25 to 35 percent. Keep the same subject category, same broad style family, and same general compositional balance, but change specific details so the result is clearly new.
+
+Required variation
+Make at least 3 meaningful changes across different axes:
+1. Subject pose or angle (stance, head turn, limb position, camera angle)
+2. Feature treatment (line weight, texture pattern, edge quality, detailing density)
+3. Secondary elements (swap or reposition props, foliage, clouds, stars, background motifs)
+4. Composition spacing (scale, spacing, overlap, framing)
+5. Color rewrite (fresh palette with at least two new hues or shifted temperature/value structure)
+6. Stylization tweak (inkier lines, softer grain, halftone, etc.)
+
+Hard constraints
+- Do not trace or replicate shapes, contours, or textures one-to-one
+- Do not reproduce the exact pose, element count/arrangement, or color codes
+- No text, logos, signatures, or watermarks
+- No brand identifiers or copyrighted marks
+
+Target look
+- Same subject type as the reference (bear -> bear, pizza -> pizza)
+- Same composition family, but with altered spacing/feature emphasis for freshness
+- Harmonious, printable palette with clean value separation
+
+Output specs
+- Single, isolated design centered on a pure white background
+- Clear silhouette with large, readable shapes for apparel printing
+- No text, no logos, no watermarks
+- High-resolution raster suitable for print
+
+Quality control self-check
+Before finalizing, compare mentally against the reference: if pose, silhouette, arrangement, and palette feel near-identical, regenerate with larger adjustments.
+
+Deliver
+ Generate 1 version that meets the above rules.</pre>
+                    </details>
+                </div>
                 <label style="display:flex; align-items:center; gap:6px; font-size:14px; color:#333;">
-                    <input type="checkbox" id="removeBgToggle" checked>
+                    <input type="checkbox" id="removeBgToggle">
                     Remove background before upscaling
                 </label>
                 <button id="processBtn" disabled>Process All Images</button>

@@ -1,7 +1,55 @@
+const STATIC_PROMPT = `Role
+You are an expert conceptual graphic designer. Create a new, original graphic inspired by an uploaded reference image.
+
+Do this silently
+Perform your visual analysis internally and do not output your reasoning.
+
+Internal analysis checklist
+- Subject and key parts
+- Style family and rendering method
+- Composition pattern and silhouette
+- Color relationships and value contrast
+- Mood and era cues
+
+Creative mandate
+Produce a design that feels like a close cousin to the reference, not a sibling. Target a novelty range of about 25 to 35 percent. Keep the same subject category, same broad style family, and same general compositional balance, but change specific details so the result is clearly new.
+
+Required variation
+Make at least 3 meaningful changes across different axes:
+1. Subject pose or angle (stance, head turn, limb position, camera angle)
+2. Feature treatment (line weight, texture pattern, edge quality, detailing density)
+3. Secondary elements (swap or reposition props, foliage, clouds, stars, background motifs)
+4. Composition spacing (scale, spacing, overlap, framing)
+5. Color rewrite (fresh palette with at least two new hues or shifted temperature/value structure)
+6. Stylization tweak (inkier lines, softer grain, halftone, etc.)
+
+Hard constraints
+- Do not trace or replicate shapes, contours, or textures one-to-one
+- Do not reproduce the exact pose, element count/arrangement, or color codes
+- No text, logos, signatures, or watermarks
+- No brand identifiers or copyrighted marks
+
+Target look
+- Same subject type as the reference (bear -> bear, pizza -> pizza)
+- Same composition family, but with altered spacing/feature emphasis for freshness
+- Harmonious, printable palette with clean value separation
+
+Output specs
+- Single, isolated design centered on a pure white background
+- Clear silhouette with large, readable shapes for apparel printing
+- No text, no logos, no watermarks
+- High-resolution raster suitable for print
+
+Quality control self-check
+Before finalizing, compare mentally against the reference: if pose, silhouette, arrangement, and palette feel near-identical, regenerate with larger adjustments.
+
+Deliver
+Generate 1 version that meets the above rules.`;
+
 class ImageProcessor {
     constructor() {
         this.images = [];
-        this.currentPrompt = '';
+        this.currentPrompt = STATIC_PROMPT;
         this.init();
     }
 
@@ -13,12 +61,11 @@ class ImageProcessor {
     setupEventListeners() {
         const uploadArea = document.getElementById('uploadArea');
         const fileInput = document.getElementById('fileInput');
-        const promptInput = document.getElementById('promptInput');
         const processBtn = document.getElementById('processBtn');
         const removeBgToggle = document.getElementById('removeBgToggle');
 
-        // Background removal preference (defaults to checked)
-        this.removeBg = removeBgToggle ? removeBgToggle.checked : true;
+        // Background removal preference (defaults to unchecked)
+        this.removeBg = removeBgToggle ? removeBgToggle.checked : false;
         if (removeBgToggle) {
             removeBgToggle.addEventListener('change', (e) => {
                 this.removeBg = !!e.target.checked;
@@ -35,12 +82,6 @@ class ImageProcessor {
         uploadArea.addEventListener('dragover', this.handleDragOver.bind(this));
         uploadArea.addEventListener('dragleave', this.handleDragLeave.bind(this));
         uploadArea.addEventListener('drop', this.handleDrop.bind(this));
-
-        // Prompt input
-        promptInput.addEventListener('input', (e) => {
-            this.currentPrompt = e.target.value.trim();
-            this.updateProcessButton();
-        });
 
         // Process button
         processBtn.addEventListener('click', () => this.processAllImages());
@@ -131,9 +172,6 @@ class ImageProcessor {
                         <option value="png">PNG</option>
                     </select>
                 </div>
-                <button class="btn btn-secondary" onclick="imageProcessor.repromptImage('${imageData.id}')" disabled>
-                    Reprompt
-                </button>
                 <div class="download-buttons">
                     <button class="btn btn-accent" onclick="imageProcessor.downloadGeminiImage('${imageData.id}')" disabled id="download_gemini_${imageData.id}">
                         Download AI Only
@@ -169,16 +207,14 @@ class ImageProcessor {
         }
 
         // Update button states
-        const repromptBtn = card.querySelector('.btn-secondary');
         const downloadBtn = card.querySelector('.btn-primary');
         const downloadGeminiBtn = document.getElementById(`download_gemini_${imageData.id}`);
         const downloadFinalBtn = document.getElementById(`download_final_${imageData.id}`);
         
-        if (repromptBtn && downloadBtn) {
+        if (downloadBtn) {
             // Enable buttons for all completion statuses
             const completedStatuses = ['complete', 'pipeline_complete', 'partial_pipeline_success', 'picsart_failed_fallback'];
             const isComplete = completedStatuses.includes(imageData.status);
-            repromptBtn.disabled = !isComplete;
             downloadBtn.disabled = !isComplete;
         }
 
@@ -216,14 +252,13 @@ class ImageProcessor {
     updateProcessButton() {
         const processBtn = document.getElementById('processBtn');
         const hasImages = this.images.length > 0;
-        const hasPrompt = this.currentPrompt.length > 0;
         
-        processBtn.disabled = !hasImages || !hasPrompt;
+        processBtn.disabled = !hasImages;
         processBtn.textContent = `Process ${this.images.length} Image${this.images.length !== 1 ? 's' : ''}`;
     }
 
     async processAllImages() {
-        if (this.images.length === 0 || !this.currentPrompt) return;
+        if (this.images.length === 0) return;
 
         // Show overall progress
         const progressSection = document.getElementById('overallProgress');
@@ -372,28 +407,7 @@ class ImageProcessor {
         progressFill.style.width = `${percentage}%`;
     }
 
-    async repromptImage(imageId) {
-        const imageData = this.images.find(img => img.id === imageId);
-        if (!imageData) return;
-
-        const newPrompt = prompt('Enter new prompt:', imageData.prompt);
-        if (newPrompt && newPrompt.trim() !== imageData.prompt) {
-            imageData.prompt = newPrompt.trim();
-            imageData.status = 'processing';
-            this.updateImageCard(imageData);
-
-            try {
-                // Process single image with new prompt
-                await this.processImage(imageData);
-                // Status is already set by processImage based on the pipeline result
-                this.updateImageCard(imageData);
-            } catch (error) {
-                console.error('Reprompt failed:', error);
-                imageData.status = 'error';
-                this.updateImageCard(imageData);
-            }
-        }
-    }
+    // Reprompt feature removed: using a universal static prompt
 
     downloadImage(imageId) {
         const imageData = this.images.find(img => img.id === imageId);

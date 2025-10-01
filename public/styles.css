@@ -101,28 +101,44 @@ header .tagline {
     gap: 10px;
     align-items: center;
     flex-wrap: wrap;
+    justify-content: space-between;
 }
 
-#promptInput {
-    flex: 1;
-    padding: 12px 14px;
-    border: 1px solid var(--border);
-    border-radius: 10px;
-    font-size: 16px;
+.prompt-info {
+    flex: 1 1 60%;
+    min-width: 260px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.prompt-note {
+    font-size: 14px;
+    color: var(--muted);
+}
+
+.prompt-details summary {
+    cursor: pointer;
+    font-size: 13px;
+    color: var(--accent);
+}
+
+.prompt-details[open] summary {
     color: var(--text);
-    background: rgba(255,255,255,0.06);
-    outline: none;
-    transition: border-color 0.2s ease, background 0.2s ease, box-shadow 0.2s ease;
 }
 
-#promptInput::placeholder {
-    color: #8a8fa3;
-}
-
-#promptInput:focus {
-    border-color: var(--accent);
-    box-shadow: 0 0 0 3px rgba(34, 211, 238, 0.15);
-    background: rgba(255,255,255,0.08);
+.prompt-text {
+    margin-top: 8px;
+    padding: 12px;
+    border-radius: 12px;
+    border: 1px solid var(--border);
+    background: rgba(255,255,255,0.04);
+    color: var(--text);
+    font-family: 'Inter', monospace;
+    font-size: 12px;
+    white-space: pre-wrap;
+    max-height: 260px;
+    overflow-y: auto;
 }
 
 #processBtn {

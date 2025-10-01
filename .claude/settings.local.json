@@ -14,7 +14,10 @@
       "Bash(node:*)",
       "Bash(curl:*)",
       "Bash(lsof:*)",
-      "Bash(killall:*)"
+      "Bash(killall:*)",
+      "Bash(xargs kill:*)",
+      "Bash(npm run dev:*)",
+      "Bash(pkill:*)"
     ],
     "deny": [],
     "ask": []
