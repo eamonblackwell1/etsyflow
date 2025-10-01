@@ -126,56 +126,80 @@ app.get('/api/health', (req, res) => {
 });
 
 // Process single image
-app.post('/api/process-image', upload.single('image'), async (req, res) => {
+app.post('/api/process-image', (req, res) => {
+    // Log request meta to help diagnose client issues
     try {
-        if (!req.file) {
-            return res.status(400).json({ error: 'No image file provided' });
+        console.log('Incoming /api/process-image', {
+            contentType: req.headers['content-type'],
+            contentLength: req.headers['content-length']
+        });
+    } catch (e) {}
+
+    // Wrap multer so we can return friendly errors
+    upload.single('image')(req, res, async (err) => {
+        if (err) {
+            console.error('Multer upload error:', err);
+            if (err.code === 'LIMIT_FILE_SIZE') {
+                return res.status(413).json({ error: 'File too large (max 10MB)' });
+            }
+            return res.status(400).json({ error: err.message || 'Upload failed' });
         }
 
-        const { prompt: incomingPrompt } = req.body;
-        const removeBgRaw = (req.body.removeBg || '').toString().toLowerCase();
-        const removeBg = removeBgRaw === 'true' || (removeBgRaw === '' && ENABLE_BG_REMOVAL);
-        const prompt = (incomingPrompt && incomingPrompt.trim().length > 0)
-            ? incomingPrompt.trim()
-            : STATIC_PROMPT;
+        try {
+            const isMultipart = (req.headers['content-type'] || '').includes('multipart/form-data');
+            if (!isMultipart) {
+                return res.status(400).json({ error: 'Invalid content type. Use multipart/form-data.' });
+            }
 
-        const jobId = generateJobId();
-        const imageData = {
-            jobId,
-            originalPath: req.file.path,
-            originalName: req.file.originalname,
-            prompt,
-            removeBg,
-            status: 'processing',
-            createdAt: new Date()
-        };
+            if (!req.file) {
+                return res.status(400).json({ error: 'No image file provided (field name must be "image")' });
+            }
 
-        processingJobs.set(jobId, imageData);
+            const { prompt: incomingPrompt } = req.body;
+            const removeBgRaw = (req.body.removeBg || '').toString().toLowerCase();
+            const removeBg = removeBgRaw === 'true' || (removeBgRaw === '' && ENABLE_BG_REMOVAL);
+            const prompt = (incomingPrompt && incomingPrompt.trim().length > 0)
+                ? incomingPrompt.trim()
+                : STATIC_PROMPT;
 
-        // Start processing in background
-        processImageWithNanoBanana(imageData)
-            .then(result => {
-                imageData.status = 'complete';
-                imageData.processedPath = result.processedPath;
-                imageData.completedAt = new Date();
-            })
-            .catch(error => {
-                console.error('Processing error:', error);
-                imageData.status = 'error';
-                imageData.error = error.message;
-                imageData.completedAt = new Date();
+            const jobId = generateJobId();
+            const imageData = {
+                jobId,
+                originalPath: req.file.path,
+                originalName: req.file.originalname,
+                prompt,
+                removeBg,
+                status: 'processing',
+                createdAt: new Date()
+            };
+
+            processingJobs.set(jobId, imageData);
+
+            // Start processing in background
+            processImageWithNanoBanana(imageData)
+                .then(result => {
+                    imageData.status = 'complete';
+                    imageData.processedPath = result.processedPath;
+                    imageData.completedAt = new Date();
+                })
+                .catch(error => {
+                    console.error('Processing error:', error);
+                    imageData.status = 'error';
+                    imageData.error = error.message;
+                    imageData.completedAt = new Date();
+                });
+
+            return res.json({
+                jobId,
+                status: 'processing',
+                originalName: req.file.originalname
             });
 
-        res.json({
-            jobId,
-            status: 'processing',
-            originalName: req.file.originalname
-        });
-
-    } catch (error) {
-        console.error('Upload error:', error);
-        res.status(500).json({ error: 'Upload failed: ' + error.message });
-    }
+        } catch (error) {
+            console.error('Upload error:', error);
+            return res.status(500).json({ error: 'Upload failed: ' + (error && error.message ? error.message : String(error)) });
+        }
+    });
 });
 
 // Check job status
@@ -352,60 +376,76 @@ app.get('/api/download/:jobId', async (req, res) => {
 });
 
 // Process multiple images
-app.post('/api/process-batch', upload.array('images', 20), async (req, res) => {
+app.post('/api/process-batch', (req, res) => {
     try {
-        if (!req.files || req.files.length === 0) {
-            return res.status(400).json({ error: 'No image files provided' });
+        console.log('Incoming /api/process-batch', {
+            contentType: req.headers['content-type'],
+            contentLength: req.headers['content-length']
+        });
+    } catch (e) {}
+
+    upload.array('images', 20)(req, res, async (err) => {
+        if (err) {
+            console.error('Multer batch upload error:', err);
+            if (err.code === 'LIMIT_FILE_SIZE') {
+                return res.status(413).json({ error: 'One or more files too large (max 10MB each)' });
+            }
+            return res.status(400).json({ error: err.message || 'Batch upload failed' });
         }
 
-        const { prompt: incomingPrompt } = req.body;
-        const removeBgRaw = (req.body.removeBg || '').toString().toLowerCase();
-        const removeBg = removeBgRaw === 'true' || (removeBgRaw === '' && ENABLE_BG_REMOVAL);
-        const prompt = (incomingPrompt && incomingPrompt.trim().length > 0)
-            ? incomingPrompt.trim()
-            : STATIC_PROMPT;
+        try {
+            if (!req.files || req.files.length === 0) {
+                return res.status(400).json({ error: 'No image files provided' });
+            }
 
-        const jobs = req.files.map(file => {
-            const jobId = generateJobId();
-            const imageData = {
-                jobId,
-                originalPath: file.path,
-                originalName: file.originalname,
-                prompt,
-                removeBg,
-                status: 'processing',
-                createdAt: new Date()
-            };
+            const { prompt: incomingPrompt } = req.body;
+            const removeBgRaw = (req.body.removeBg || '').toString().toLowerCase();
+            const removeBg = removeBgRaw === 'true' || (removeBgRaw === '' && ENABLE_BG_REMOVAL);
+            const prompt = (incomingPrompt && incomingPrompt.trim().length > 0)
+                ? incomingPrompt.trim()
+                : STATIC_PROMPT;
 
-            processingJobs.set(jobId, imageData);
+            const jobs = req.files.map(file => {
+                const jobId = generateJobId();
+                const imageData = {
+                    jobId,
+                    originalPath: file.path,
+                    originalName: file.originalname,
+                    prompt,
+                    removeBg,
+                    status: 'processing',
+                    createdAt: new Date()
+                };
 
-            // Start processing in background
-            processImageWithNanoBanana(imageData)
-                .then(result => {
-                    imageData.status = 'complete';
-                    imageData.processedPath = result.processedPath;
-                    imageData.completedAt = new Date();
-                })
-                .catch(error => {
-                    console.error('Processing error:', error);
-                    imageData.status = 'error';
-                    imageData.error = error.message;
-                    imageData.completedAt = new Date();
-                });
+                processingJobs.set(jobId, imageData);
 
-            return {
-                jobId,
-                originalName: file.originalname,
-                status: 'processing'
-            };
-        });
+                // Start processing in background
+                processImageWithNanoBanana(imageData)
+                    .then(result => {
+                        imageData.status = 'complete';
+                        imageData.processedPath = result.processedPath;
+                        imageData.completedAt = new Date();
+                    })
+                    .catch(error => {
+                        console.error('Processing error:', error);
+                        imageData.status = 'error';
+                        imageData.error = error.message;
+                        imageData.completedAt = new Date();
+                    });
 
-        res.json({ jobs });
+                return {
+                    jobId,
+                    originalName: file.originalname,
+                    status: 'processing'
+                };
+            });
 
-    } catch (error) {
-        console.error('Batch upload error:', error);
-        res.status(500).json({ error: 'Batch upload failed: ' + error.message });
-    }
+            return res.json({ jobs });
+        } catch (error) {
+            console.error('Batch upload error:', error);
+            return res.status(500).json({ error: 'Batch upload failed: ' + (error && error.message ? error.message : String(error)) });
+        }
+    });
 });
 
 // Utility functions
