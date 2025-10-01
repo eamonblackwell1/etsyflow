@@ -571,11 +571,22 @@ function updateJobStatus(jobId, status, additionalData = {}) {
 }
 
 async function processImageWithNanoBanana(imageData) {
-    try {
-        console.log(`Processing image: ${imageData.originalName} with prompt: "${imageData.prompt}"`);
+    const jobStartTime = Date.now();
+    
+    // Create a timeout promise that will reject after 28 seconds (within Vercel's 30s limit)
+    const timeoutPromise = new Promise((_, reject) => {
+        setTimeout(() => {
+            reject(new Error(`Job ${imageData.jobId} timed out after 28 seconds (Vercel function limit)`));
+        }, 28000);
+    });
+    
+    // Create the main processing promise
+    const processingPromise = (async () => {
+        try {
+        console.log(`[${imageData.jobId}] Starting processing: ${imageData.originalName} with prompt: "${imageData.prompt}"`);
         
-        // Update status to Gemini processing
-        updateJobStatus(imageData.jobId, 'gemini_processing');
+        // Update status to Gemini processing with timestamp
+        updateJobStatus(imageData.jobId, 'gemini_processing', { startTime: jobStartTime });
         
         // Read the image file and convert to base64
         const imageBuffer = fs.readFileSync(imageData.originalPath);
@@ -612,7 +623,11 @@ async function processImageWithNanoBanana(imageData) {
 			]
 		};
 		// Add timeout and better error handling
-		console.log(`Calling Gemini API for job ${imageData.jobId}...`);
+		console.log(`[${imageData.jobId}] Calling Gemini API with timeout 25s...`);
+		console.log(`[${imageData.jobId}] Image size: ${Math.round(imageBuffer.length / 1024)}KB`);
+		console.log(`[${imageData.jobId}] API URL: ${url}`);
+		
+		const startTime = Date.now();
 		const { data } = await axios.post(url, body, {
 			headers: {
 				'Content-Type': 'application/json',
@@ -622,7 +637,8 @@ async function processImageWithNanoBanana(imageData) {
 			maxContentLength: 50 * 1024 * 1024, // 50MB max response
 			maxBodyLength: 50 * 1024 * 1024
 		}).catch(error => {
-			console.error('Gemini API request failed:', {
+			const elapsed = Date.now() - startTime;
+			console.error(`[${imageData.jobId}] Gemini API request failed after ${elapsed}ms:`, {
 				status: error.response?.status,
 				statusText: error.response?.statusText,
 				data: error.response?.data,
@@ -642,6 +658,10 @@ async function processImageWithNanoBanana(imageData) {
 			}
 			throw error;
 		});
+		
+		const elapsed = Date.now() - startTime;
+		console.log(`[${imageData.jobId}] Gemini API response received after ${elapsed}ms`);
+		console.log(`[${imageData.jobId}] Response status: SUCCESS`);
 
 		// Check if the response contains generated image data
 		const candidates = data && data.candidates;
@@ -759,12 +779,26 @@ async function processImageWithNanoBanana(imageData) {
             }
         }
         
+        } catch (error) {
+            // Improve error visibility for troubleshooting
+            const details = (error && (error.response?.data || error.response || error.cause || error.stack)) || error;
+            console.error(`[${imageData.jobId}] Processing error:`, details);
+            const message = (error && error.message) ? error.message : String(error);
+            throw new Error(`Image processing failed: ${message}`);
+        }
+    })();
+    
+    // Race between processing and timeout
+    try {
+        return await Promise.race([processingPromise, timeoutPromise]);
     } catch (error) {
-        // Improve error visibility for troubleshooting
-        const details = (error && (error.response?.data || error.response || error.cause || error.stack)) || error;
-        console.error('Gemini API error:', details);
-        const message = (error && error.message) ? error.message : String(error);
-        throw new Error(`Image processing failed: ${message}`);
+        // Update job status to error
+        updateJobStatus(imageData.jobId, 'error', { 
+            error: error.message,
+            endTime: Date.now(),
+            duration: Date.now() - jobStartTime 
+        });
+        throw error;
     }
 }
 
