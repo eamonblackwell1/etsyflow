@@ -170,6 +170,44 @@ app.get('/api/test', (req, res) => {
     });
 });
 
+// Test Gemini API connectivity
+app.get('/api/test-gemini', async (req, res) => {
+    try {
+        if (!GEMINI_API_KEY) {
+            return res.status(400).json({ error: 'No Gemini API key configured' });
+        }
+        
+        const url = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent';
+        const testBody = {
+            contents: [{
+                parts: [{ text: 'Say "API is working" and nothing else.' }]
+            }]
+        };
+        
+        const response = await axios.post(url, testBody, {
+            headers: {
+                'Content-Type': 'application/json',
+                'x-goog-api-key': GEMINI_API_KEY
+            },
+            timeout: 10000
+        });
+        
+        res.json({
+            success: true,
+            message: 'Gemini API is accessible',
+            response: response.data?.candidates?.[0]?.content?.parts?.[0]?.text || 'No text response'
+        });
+    } catch (error) {
+        console.error('Gemini test failed:', error.response?.data || error.message);
+        res.status(500).json({
+            success: false,
+            error: error.response?.data?.error?.message || error.message,
+            status: error.response?.status,
+            hint: error.response?.status === 401 ? 'Check your API key in Vercel dashboard' : undefined
+        });
+    }
+});
+
 // Health check with debug info
 app.get('/api/health', (req, res) => {
     const hasGeminiKey = !!(GEMINI_API_KEY && GEMINI_API_KEY.trim());
@@ -560,7 +598,8 @@ async function processImageWithNanoBanana(imageData) {
 		const finalPrompt = `${instructionPreamble}\n\nUser instructions:\n${imageData.prompt}`;
 
 		// Direct REST request to v1beta endpoint per official docs
-		const url = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-image-preview:generateContent';
+		// Try different model names - Gemini 2.0 Flash is the latest
+		const url = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent';
 		const body = {
 			generationConfig: { temperature: 0.3 },
 			contents: [
@@ -572,11 +611,36 @@ async function processImageWithNanoBanana(imageData) {
 				}
 			]
 		};
+		// Add timeout and better error handling
+		console.log(`Calling Gemini API for job ${imageData.jobId}...`);
 		const { data } = await axios.post(url, body, {
 			headers: {
 				'Content-Type': 'application/json',
 				'x-goog-api-key': GEMINI_API_KEY
+			},
+			timeout: 60000, // 60 second timeout
+			maxContentLength: 50 * 1024 * 1024, // 50MB max response
+			maxBodyLength: 50 * 1024 * 1024
+		}).catch(error => {
+			console.error('Gemini API request failed:', {
+				status: error.response?.status,
+				statusText: error.response?.statusText,
+				data: error.response?.data,
+				code: error.code,
+				message: error.message
+			});
+			
+			if (error.code === 'ECONNABORTED') {
+				throw new Error('Gemini API request timed out after 60 seconds');
+			} else if (error.response?.status === 401) {
+				throw new Error('Invalid API key - please check GEMINI_API_KEY in Vercel dashboard');
+			} else if (error.response?.status === 403) {
+				throw new Error('API key is valid but lacks permissions or quota exceeded');
+			} else if (error.response?.status === 400) {
+				const detail = error.response?.data?.error?.message || 'Invalid request';
+				throw new Error(`Gemini API error: ${detail}`);
 			}
+			throw error;
 		});
 
 		// Check if the response contains generated image data
