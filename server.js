@@ -36,9 +36,21 @@ app.use(express.json());
 const STATIC_DIR = path.resolve(__dirname);
 app.use(express.static(STATIC_DIR));
 
-// Explicit root route to avoid "Cannot GET /" in some runtimes
+// Explicit routes for static assets (Vercel Node runtime sometimes skips express.static)
 app.get('/', (req, res) => {
 	return res.sendFile(path.join(STATIC_DIR, 'index.html'));
+});
+
+app.get('/styles.css', (req, res) => {
+	return res.type('text/css').sendFile(path.join(STATIC_DIR, 'styles.css'));
+});
+
+app.get('/script.js', (req, res) => {
+	return res.type('application/javascript').sendFile(path.join(STATIC_DIR, 'script.js'));
+});
+
+app.get(['/favicon.ico', '/favicon-16.png', '/favicon-32.png', '/favicon.svg'], (req, res) => {
+	return res.sendFile(path.join(STATIC_DIR, req.path.replace(/^\/+/, '')));
 });
 
 // Configure multer for file uploads
