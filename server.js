@@ -6,6 +6,7 @@ const FormData = require('form-data');
 const fs = require('fs');
 const path = require('path');
 const sharp = require('sharp');
+const os = require('os');
 require('dotenv').config();
 // Using direct REST call to Gemini API (v1beta) to avoid SDK version mismatches
 
@@ -87,14 +88,23 @@ app.use(express.static(STATIC_DIR));
 // NOTE: SPA fallback must be registered AFTER API routes so it doesn't
 // intercept GET requests like /api/job/:id. We'll add it near the end.
 
+// Directories (use tmp on serverless platforms like Vercel)
+const BASE_WORK_DIR = process.env.VERCEL ? os.tmpdir() : path.resolve('.');
+const UPLOADS_DIR = path.join(BASE_WORK_DIR, 'uploads');
+const PROCESSED_DIR = path.join(BASE_WORK_DIR, 'processed');
+
+// Ensure working dirs exist
+try {
+    if (!fs.existsSync(UPLOADS_DIR)) fs.mkdirSync(UPLOADS_DIR, { recursive: true });
+    if (!fs.existsSync(PROCESSED_DIR)) fs.mkdirSync(PROCESSED_DIR, { recursive: true });
+} catch (e) {
+    console.warn('Could not prepare working directories:', e?.message || e);
+}
+
 // Configure multer for file uploads
 const storage = multer.diskStorage({
     destination: function (req, file, cb) {
-        const uploadsDir = './uploads';
-        if (!fs.existsSync(uploadsDir)) {
-            fs.mkdirSync(uploadsDir);
-        }
-        cb(null, uploadsDir);
+        cb(null, UPLOADS_DIR);
     },
     filename: function (req, file, cb) {
         const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
@@ -146,10 +156,7 @@ app.post('/api/process-image', (req, res) => {
         }
 
         try {
-            const isMultipart = (req.headers['content-type'] || '').includes('multipart/form-data');
-            if (!isMultipart) {
-                return res.status(400).json({ error: 'Invalid content type. Use multipart/form-data.' });
-            }
+            // Some environments strip content-type boundaries; rely on multer success instead of strict check
 
             if (!req.file) {
                 return res.status(400).json({ error: 'No image file provided (field name must be "image")' });
@@ -530,10 +537,10 @@ async function processImageWithNanoBanana(imageData) {
             // Extract the generated image data
             const generatedImageData = imageParts[0].inlineData.data;
             
-            // Create processed directory
-            const processedDir = './processed';
+            // Ensure processed directory exists
+            const processedDir = PROCESSED_DIR;
             if (!fs.existsSync(processedDir)) {
-                fs.mkdirSync(processedDir);
+                fs.mkdirSync(processedDir, { recursive: true });
             }
 
             // Save the Gemini-generated image as PNG
@@ -667,9 +674,9 @@ async function processPicsartBackgroundRemoval(imagePath) {
         console.log('Picsart background removal response:', response.data);
         
         // Save the processed image with background removed
-        const processedDir = './processed';
+        const processedDir = PROCESSED_DIR;
         if (!fs.existsSync(processedDir)) {
-            fs.mkdirSync(processedDir);
+            fs.mkdirSync(processedDir, { recursive: true });
         }
         
         const filename = `bg_removed_${Date.now()}_${path.basename(imagePath)}`;
@@ -749,9 +756,9 @@ async function processPicsartUpscaling(imagePath, upscaleFactor = 2) {
         console.log('Picsart upscaling response:', response.data);
         
         // Save the upscaled image
-        const processedDir = './processed';
+        const processedDir = PROCESSED_DIR;
         if (!fs.existsSync(processedDir)) {
-            fs.mkdirSync(processedDir);
+            fs.mkdirSync(processedDir, { recursive: true });
         }
         
         const filename = `upscaled_${Date.now()}_${path.basename(imagePath)}`;
