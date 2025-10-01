@@ -210,25 +210,20 @@ class ImageProcessor {
         const downloadBtn = card.querySelector('.btn-primary');
         const downloadGeminiBtn = document.getElementById(`download_gemini_${imageData.id}`);
         const downloadFinalBtn = document.getElementById(`download_final_${imageData.id}`);
-        
-        if (downloadBtn) {
-            // Enable buttons for all completion statuses
-            const completedStatuses = ['complete', 'pipeline_complete', 'partial_pipeline_success', 'picsart_failed_fallback'];
-            const isComplete = completedStatuses.includes(imageData.status);
-            downloadBtn.disabled = !isComplete;
-        }
 
-        // Update download button states
         if (downloadGeminiBtn) {
-            // Enable Gemini download if we have gemini_complete status or better
-            const geminiStatuses = ['gemini_complete', 'removing_background', 'upscaling_image', 'complete', 'pipeline_complete', 'partial_pipeline_success', 'picsart_failed_fallback'];
-            downloadGeminiBtn.disabled = !geminiStatuses.includes(imageData.status);
+            const hasGeminiToken = !!(imageData.downloadTokens && imageData.downloadTokens.gemini);
+            downloadGeminiBtn.disabled = !hasGeminiToken;
         }
 
         if (downloadFinalBtn) {
-            // Enable final download only when completely done
-            const completedStatuses = ['complete', 'pipeline_complete', 'partial_pipeline_success', 'picsart_failed_fallback'];
-            downloadFinalBtn.disabled = !completedStatuses.includes(imageData.status);
+            const hasFinalToken = !!(imageData.downloadTokens && imageData.downloadTokens.final);
+            downloadFinalBtn.disabled = !hasFinalToken;
+        }
+
+        if (downloadBtn) {
+            const hasFinalToken = !!(imageData.downloadTokens && imageData.downloadTokens.final);
+            downloadBtn.disabled = !hasFinalToken;
         }
     }
 
@@ -269,24 +264,17 @@ class ImageProcessor {
         let completedCount = 0;
 
         for (const imageData of this.images) {
-            // Check if already complete with any of the completion statuses
-            const completedStatuses = ['complete', 'pipeline_complete', 'partial_pipeline_success', 'picsart_failed_fallback'];
-            if (completedStatuses.includes(imageData.status)) {
-                completedCount++;
-                continue;
-            }
-
             imageData.status = 'processing';
             imageData.prompt = this.currentPrompt;
             this.updateImageCard(imageData);
+            this.logStatus(imageData, 'Uploading image...');
 
             try {
-                // Process image through the pipeline
                 await this.processImage(imageData);
-                // Status is already set by processImage based on the pipeline result
             } catch (error) {
                 console.error('Processing failed:', error);
                 imageData.status = 'error';
+                imageData.error = error.message;
             }
 
             this.updateImageCard(imageData);
@@ -313,87 +301,48 @@ class ImageProcessor {
             });
 
             if (!response.ok) {
-                throw new Error(`HTTP error! status: ${response.status}`);
+                const errorBody = await response.json().catch(() => ({}));
+                const message = errorBody?.error || `HTTP error! status: ${response.status}`;
+                throw new Error(message);
             }
 
             const result = await response.json();
-            imageData.jobId = result.jobId;
-
-            // Start polling for status
-            await this.pollJobStatus(imageData);
+            this.applyProcessingResult(imageData, result);
         } catch (error) {
             console.error('Process image error:', error);
             throw error;
         }
     }
 
-    async pollJobStatus(imageData) {
-        const maxAttempts = 60; // 5 minutes max
-        let attempts = 0;
-        const getStatusText = this.getStatusText.bind(this);
+    applyProcessingResult(imageData, result) {
+        const safeStatus = result.status || 'complete';
+        imageData.status = safeStatus;
+        imageData.progress = null;
+        imageData.pipelineErrors = result.pipelineErrors || [];
+        imageData.processedUrl = result.previewUrl || null;
+        imageData.geminiUrl = result.geminiPreviewUrl || null;
+        imageData.downloadTokens = result.downloadTokens || {};
+        imageData.downloadFilenames = result.downloadFilenames || {};
+        imageData.error = result.error || null;
 
-        return new Promise((resolve, reject) => {
-            const checkStatus = async () => {
-                attempts++;
-                
-                try {
-                    const response = await fetch(`/api/job/${imageData.jobId}`);
-                    if (!response.ok) {
-                        throw new Error(`HTTP error! status: ${response.status}`);
-                    }
+        if (imageData.processedUrl) {
+            const cacheBust = Date.now();
+            imageData.processedUrl = `${imageData.processedUrl}${imageData.processedUrl.includes('?') ? '&' : '?'}cb=${cacheBust}`;
+        }
 
-                    const job = await response.json();
-                    
-                    // Check for all possible completion statuses from the pipeline
-                    const completedStatuses = ['complete', 'pipeline_complete', 'partial_pipeline_success', 'picsart_failed_fallback'];
-                    if (completedStatuses.includes(job.status)) {
-                        imageData.processedUrl = job.processedUrl;
-                        imageData.status = job.status; // Set the actual final status
-                        imageData.progress = job.progress;
-                        resolve();
-                        return;
-                    }
-                    
-                    if (job.status === 'error') {
-                        throw new Error(job.error || 'Processing failed');
-                    }
-                    
-                    // Update progress message and status for intermediate stages
-                    if (job.status !== imageData.status) {
-                        imageData.status = job.status;
-                        console.log(`Job ${imageData.jobId}: Status updated to ${job.status}`);
-                        
-                        // Update the visual status immediately
-                        const statusElement = document.getElementById(`status_${imageData.id}`);
-                        if (statusElement) {
-                            statusElement.textContent = getStatusText(job.status, job);
-                            statusElement.className = `image-status status-${job.status}`;
-                        }
-                    }
-                    
-                    // Update progress message if available
-                    if (job.progress) {
-                        console.log(`Job ${imageData.jobId}: ${job.progress}`);
-                        const statusElement = document.getElementById(`status_${imageData.id}`);
-                        if (statusElement) {
-                            statusElement.textContent = job.progress;
-                        }
-                    }
+        if (imageData.geminiUrl) {
+            const cacheBust = Date.now();
+            imageData.geminiUrl = `${imageData.geminiUrl}${imageData.geminiUrl.includes('?') ? '&' : '?'}cb=${cacheBust}`;
+        }
 
-                    if (attempts >= maxAttempts) {
-                        throw new Error('Processing timeout');
-                    }
+        this.logStatus(imageData, this.getStatusText(imageData.status, { progress: result.progress }));
+    }
 
-                    // Continue polling every 5 seconds
-                    setTimeout(checkStatus, 5000);
-                    
-                } catch (error) {
-                    reject(error);
-                }
-            };
-
-            checkStatus();
-        });
+    logStatus(imageData, message) {
+        const statusElement = document.getElementById(`status_${imageData.id}`);
+        if (statusElement && message) {
+            statusElement.textContent = message;
+        }
     }
 
     updateOverallProgress(completedCount) {
@@ -411,17 +360,14 @@ class ImageProcessor {
 
     downloadImage(imageId) {
         const imageData = this.images.find(img => img.id === imageId);
-        if (!imageData || !imageData.processedUrl || !imageData.jobId) return;
+        if (!imageData || !imageData.downloadTokens || !imageData.downloadTokens.final) return;
 
-        // Use the backend download endpoint
         const link = document.createElement('a');
         const formatSelect = document.getElementById(`format_${imageId}`);
         const requestedFormat = formatSelect ? (formatSelect.value || 'jpg') : 'jpg';
-        link.href = `/api/download/${imageData.jobId}?format=${encodeURIComponent(requestedFormat)}`;
+        const filename = (imageData.downloadFilenames && imageData.downloadFilenames.final) || `enhanced_${(imageData.name || 'image').replace(/\.[^/.]+$/, '')}.${requestedFormat}`;
 
-        // Suggest a filename with the selected extension
-        const baseName = (imageData.name || 'image').replace(/\.[^/.]+$/, '');
-        link.download = `enhanced_${baseName}.${requestedFormat}`;
+        link.href = `/api/download-by-token?token=${encodeURIComponent(imageData.downloadTokens.final)}&format=${encodeURIComponent(requestedFormat)}&filename=${encodeURIComponent(filename)}`;
         document.body.appendChild(link);
         link.click();
         document.body.removeChild(link);
@@ -429,17 +375,14 @@ class ImageProcessor {
 
     downloadGeminiImage(imageId) {
         const imageData = this.images.find(img => img.id === imageId);
-        if (!imageData || !imageData.jobId) return;
+        if (!imageData || !imageData.downloadTokens || !imageData.downloadTokens.gemini) return;
 
-        // Use the Gemini-only download endpoint
         const link = document.createElement('a');
         const formatSelect = document.getElementById(`format_${imageId}`);
         const requestedFormat = formatSelect ? (formatSelect.value || 'jpg') : 'jpg';
-        link.href = `/api/download-gemini/${imageData.jobId}?format=${encodeURIComponent(requestedFormat)}`;
+        const filename = (imageData.downloadFilenames && imageData.downloadFilenames.gemini) || `ai_only_${(imageData.name || 'image').replace(/\.[^/.]+$/, '')}.${requestedFormat}`;
 
-        // Suggest a filename with the selected extension
-        const baseName = (imageData.name || 'image').replace(/\.[^/.]+$/, '');
-        link.download = `ai_only_${baseName}.${requestedFormat}`;
+        link.href = `/api/download-by-token?token=${encodeURIComponent(imageData.downloadTokens.gemini)}&format=${encodeURIComponent(requestedFormat)}&filename=${encodeURIComponent(filename)}`;
         document.body.appendChild(link);
         link.click();
         document.body.removeChild(link);

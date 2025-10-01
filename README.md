@@ -4,11 +4,10 @@ A web application for bulk processing images through Google's nano banana API.
 
 ## Features
 
-- **Bulk Upload**: Drag & drop or select multiple images at once
-- **Progress Tracking**: Real-time progress bars for individual and overall processing
-- **Grid Display**: Clean grid layout showing original and processed images side-by-side
-- **Reprompt**: Re-process individual images with different prompts
-- **Download**: Save processed images to your computer
+- **Single or Batch Upload**: Drag & drop one or many images at once
+- **Instant Status**: Each upload waits for the AI pipeline to finish and returns the final art in one response
+- **Side-by-Side Preview**: See the original and enhanced image together
+- **Download Options**: Grab the AI-only output or the fully enhanced version in JPG or PNG
 
 ## Setup
 
@@ -52,10 +51,9 @@ A web application for bulk processing images through Google's nano banana API.
 
 ## API Endpoints
 
-- `POST /api/process-image` - Process single image
-- `POST /api/process-batch` - Process multiple images
-- `GET /api/job/:jobId` - Check processing status
-- `GET /api/download/:jobId` - Download processed image
+- `POST /api/process-image` - Upload and process a single image (responds only after completion)
+- `POST /api/process-batch` - Upload and process multiple images (still streaming results per file)
+- `GET /api/download-by-token` - Secure download endpoint for finished files. Pass the `token` returned by `process-image` along with optional `format` and `filename` query params.
 
 ## Status
 
@@ -90,3 +88,7 @@ A web application for bulk processing images through Google's nano banana API.
 4. Build & deploy.
 
 Note: This app runs an Express server on PORT. Use a Node Server preset or set the Start Command to npm start.
+
+### Environment variable reminder for downloads
+
+- `DOWNLOAD_TOKEN_SECRET` (optional): Secret used to sign download tokens in production. If you do not supply one, a default development value is used.

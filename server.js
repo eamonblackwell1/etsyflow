@@ -7,6 +7,7 @@ const fs = require('fs');
 const path = require('path');
 const sharp = require('sharp');
 const os = require('os');
+const crypto = require('crypto');
 // Load environment variables
 // Note: On Vercel, env vars come from dashboard, not .env file
 if (process.env.NODE_ENV !== 'production' && !process.env.VERCEL) {
@@ -22,6 +23,7 @@ const PORT = process.env.PORT || 3000;
 // Support common env names on Vercel
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY || process.env.NEXT_PUBLIC_GOOGLE_API_KEY;
 const PICSART_API_KEY = process.env.PICSART_API_KEY;
+const DOWNLOAD_TOKEN_SECRET = process.env.DOWNLOAD_TOKEN_SECRET || 'local-dev-secret';
 
 // Log startup environment info
 console.log('Server starting with environment:', {
@@ -148,9 +150,6 @@ const upload = multer({
         cb(null, true);
     }
 });
-
-// Store for tracking processing jobs
-const processingJobs = new Map();
 
 // API Routes
 
@@ -302,27 +301,22 @@ app.post('/api/process-image', (req, res) => {
                 createdAt: new Date()
             };
 
-            processingJobs.set(jobId, imageData);
+            try {
+                const result = await processImageWithNanoBanana(imageData);
+                imageData.processedPath = result?.processedPath || imageData.processedPath;
+                imageData.completedAt = new Date();
 
-            // Start processing in background
-            processImageWithNanoBanana(imageData)
-                .then(result => {
-                    imageData.status = 'complete';
-                    imageData.processedPath = result.processedPath;
-                    imageData.completedAt = new Date();
-                })
-                .catch(error => {
-                    console.error('Processing error:', error);
-                    imageData.status = 'error';
-                    imageData.error = error.message;
-                    imageData.completedAt = new Date();
-                });
+                const responsePayload = buildJobResponsePayload(imageData);
 
-            return res.json({
-                jobId,
-                status: 'processing',
-                originalName: req.file.originalname
-            });
+                return res.json(responsePayload);
+            } catch (processingError) {
+                console.error('Processing error:', processingError);
+                imageData.status = 'error';
+                imageData.error = processingError.message;
+                imageData.completedAt = new Date();
+
+                return res.status(500).json({ error: processingError.message || 'Processing failed' });
+            }
 
         } catch (error) {
             console.error('Upload error:', error);
@@ -333,174 +327,42 @@ app.post('/api/process-image', (req, res) => {
 
 // Check job status
 app.get('/api/job/:jobId', (req, res) => {
-    const job = processingJobs.get(req.params.jobId);
-    if (!job) {
-        return res.status(404).json({ error: 'Job not found' });
-    }
-
-    const response = {
-        jobId: job.jobId,
-        status: job.status,
-        originalName: job.originalName,
-        prompt: job.prompt,
-        createdAt: job.createdAt
-    };
-
-    // Add lastUpdated if available
-    if (job.lastUpdated) {
-        response.lastUpdated = job.lastUpdated;
-    }
-
-    // Add processing stage information
-    const completedStatuses = ['complete', 'pipeline_complete', 'partial_pipeline_success', 'picsart_failed_fallback'];
-    if (completedStatuses.includes(job.status) && job.processedPath) {
-        response.processedUrl = `/api/download/${job.jobId}`;
-    }
-
-    // Add Gemini download URL if available
-    if (job.geminiDownloadPath) {
-        response.geminiUrl = `/api/download-gemini/${job.jobId}`;
-    }
-
-    // Add progress information based on status
-    switch (job.status) {
-        case 'processing':
-        case 'gemini_processing':
-            response.progress = 'Generating design with AI...';
-            break;
-        case 'gemini_complete':
-            response.progress = job.removeBg ? 'AI design complete, removing background...' : 'AI design complete, upscaling...';
-            break;
-        case 'removing_background':
-            response.progress = 'Removing background...';
-            break;
-        case 'upscaling_image':
-            response.progress = 'Upscaling image for high quality...';
-            break;
-        case 'pipeline_complete':
-            response.progress = 'Processing complete!';
-            break;
-        case 'partial_pipeline_success':
-            response.progress = 'Processing complete (partial enhancement)';
-            break;
-        case 'picsart_failed_fallback':
-            response.progress = 'Processing complete (using fallback)';
-            break;
-        case 'complete':
-            response.progress = 'Complete!';
-            break;
-    }
-
-    if (job.status === 'error') {
-        response.error = job.error;
-    }
-
-    res.json(response);
+    return res.status(410).json({ error: 'Job polling has been removed. Re-run the request and wait for the response to finish.' });
 });
 
 // Download Gemini-only processed image
 app.get('/api/download-gemini/:jobId', async (req, res) => {
-    const job = processingJobs.get(req.params.jobId);
-    if (!job || !job.geminiDownloadPath) {
-        return res.status(404).json({ error: 'Gemini image not found' });
-    }
-
-    if (!fs.existsSync(job.geminiDownloadPath)) {
-        return res.status(404).json({ error: 'File not found on disk' });
-    }
-
-    const requestedFormatRaw = (req.query.format || '').toString().toLowerCase();
-    const requestedFormat = ['jpg', 'jpeg', 'png'].includes(requestedFormatRaw) ? requestedFormatRaw : null;
-
-    // If no conversion requested, stream the file inline for preview
-    if (!requestedFormat) {
-        return res.sendFile(path.resolve(job.geminiDownloadPath));
-    }
-
-    try {
-        // Read source buffer and convert format
-        const sourceBuffer = fs.readFileSync(job.geminiDownloadPath);
-        let transformer = sharp(sourceBuffer);
-
-        if (requestedFormat === 'png') {
-            transformer = transformer.png({ compressionLevel: 9 });
-        } else {
-            // Flatten transparency onto white to avoid black backgrounds in JPEG
-            transformer = transformer
-                .flatten({ background: { r: 255, g: 255, b: 255 } })
-                .jpeg({ quality: 92, mozjpeg: true });
-        }
-
-        const outputBuffer = await transformer.toBuffer();
-
-        const baseName = path.basename(job.originalName, path.extname(job.originalName));
-        const outName = `gemini_${baseName}.${requestedFormat === 'jpeg' ? 'jpg' : requestedFormat}`;
-        const mime = requestedFormat === 'png' ? 'image/png' : 'image/jpeg';
-
-        res.setHeader('Content-Type', mime);
-        res.setHeader('Content-Disposition', `attachment; filename="${outName}"`);
-        return res.send(outputBuffer);
-    } catch (err) {
-        console.error('Gemini download conversion error:', err);
-        // Fallback to raw download with actual extension
-        const actualExt = path.extname(job.geminiDownloadPath) || '.png';
-        const baseName = path.basename(job.originalName, path.extname(job.originalName));
-        const filename = `gemini_${baseName}${actualExt}`;
-        return res.download(job.geminiDownloadPath, filename);
-    }
+    return res.status(410).json({ error: 'This endpoint is deprecated. Please use /api/download-by-token.' });
 });
 
 // Download final processed image (with Picsart enhancements if successful)
 app.get('/api/download/:jobId', async (req, res) => {
-    const job = processingJobs.get(req.params.jobId);
-    const completedStatuses = ['complete', 'pipeline_complete', 'partial_pipeline_success', 'picsart_failed_fallback'];
-    if (!job || !completedStatuses.includes(job.status) || !job.processedPath) {
-        return res.status(404).json({ error: 'Processed image not found' });
-    }
+    return res.status(410).json({ error: 'This endpoint is deprecated. Please use /api/download-by-token.' });
+});
 
-    if (!fs.existsSync(job.processedPath)) {
-        return res.status(404).json({ error: 'File not found on disk' });
-    }
-
-    const requestedFormatRaw = (req.query.format || '').toString().toLowerCase();
-    const requestedFormat = ['jpg', 'jpeg', 'png'].includes(requestedFormatRaw) ? requestedFormatRaw : null;
-
-    // If no conversion requested, stream the file inline for preview
-    if (!requestedFormat) {
-        return res.sendFile(path.resolve(job.processedPath));
-    }
-
+app.get('/api/download-by-token', async (req, res) => {
     try {
-        // Read source buffer
-        const sourceBuffer = fs.readFileSync(job.processedPath);
-        let transformer = sharp(sourceBuffer);
-
-        // Ensure we output the requested format
-        if (requestedFormat === 'png') {
-            transformer = transformer.png({ compressionLevel: 9 });
-        } else {
-            // treat jpg and jpeg the same; flatten transparency to white for JPEG
-            transformer = transformer
-                .flatten({ background: { r: 255, g: 255, b: 255 } })
-                .jpeg({ quality: 92, mozjpeg: true });
+        const { token } = req.query;
+        if (!token) {
+            return res.status(400).json({ error: 'Missing token' });
         }
 
-        const outputBuffer = await transformer.toBuffer();
+        const resolvedPath = decodeDownloadToken(token);
+        const requestedFormatRaw = (req.query.format || '').toString().toLowerCase();
+        const requestedFormat = ['jpg', 'jpeg', 'png'].includes(requestedFormatRaw) ? requestedFormatRaw : null;
+        const inline = ['1', 'true', 'yes'].includes((req.query.inline || '').toString().toLowerCase());
+        const fallbackName = req.query.filename || path.basename(resolvedPath);
 
-        const baseName = path.basename(job.originalName, path.extname(job.originalName));
-        const outName = `processed_${baseName}.${requestedFormat === 'jpeg' ? 'jpg' : requestedFormat}`;
-        const mime = requestedFormat === 'png' ? 'image/png' : 'image/jpeg';
-
-        res.setHeader('Content-Type', mime);
-        res.setHeader('Content-Disposition', `attachment; filename="${outName}"`);
-        return res.send(outputBuffer);
-    } catch (err) {
-        console.error('Download conversion error:', err);
-        // Fallback to raw download with actual extension
-        const actualExt = path.extname(job.processedPath) || '.png';
-        const baseName = path.basename(job.originalName, path.extname(job.originalName));
-        const filename = `processed_${baseName}${actualExt}`;
-        return res.download(job.processedPath, filename);
+        await streamImageFile({
+            filePath: resolvedPath,
+            requestedFormat,
+            res,
+            inline,
+            downloadName: fallbackName
+        });
+    } catch (error) {
+        console.error('Download-by-token error:', error);
+        return res.status(400).json({ error: error.message || 'Invalid download token' });
     }
 });
 
@@ -546,8 +408,6 @@ app.post('/api/process-batch', (req, res) => {
                     createdAt: new Date()
                 };
 
-                processingJobs.set(jobId, imageData);
-
                 // Start processing in background
                 processImageWithNanoBanana(imageData)
                     .then(result => {
@@ -582,19 +442,6 @@ function generateJobId() {
     return 'job_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
 }
 
-function updateJobStatus(jobId, status, additionalData = {}) {
-    const job = processingJobs.get(jobId);
-    if (job) {
-        job.status = status;
-        job.lastUpdated = new Date();
-        
-        // Add any additional data (like intermediate paths, progress, etc.)
-        Object.assign(job, additionalData);
-        
-        console.log(`Job ${jobId} status updated to: ${status}`);
-    }
-}
-
 async function processImageWithNanoBanana(imageData) {
     const jobStartTime = Date.now();
     
@@ -609,9 +456,8 @@ async function processImageWithNanoBanana(imageData) {
     const processingPromise = (async () => {
         try {
             console.log(`[${imageData.jobId}] Starting processing: ${imageData.originalName} with prompt: "${imageData.prompt}"`);
-            
-            // Update status to Gemini processing with timestamp
-            updateJobStatus(imageData.jobId, 'gemini_processing', { startTime: jobStartTime });
+            imageData.status = 'gemini_processing';
+            imageData.startTime = jobStartTime;
             
             // Read the image file and convert to base64
             const imageBuffer = fs.readFileSync(imageData.originalPath);
@@ -724,7 +570,9 @@ async function processImageWithNanoBanana(imageData) {
             console.log(`Gemini image generated and saved: ${geminiPath}`);
             
             // Update status: Gemini complete, starting Picsart processing
-            updateJobStatus(imageData.jobId, 'gemini_complete', { geminiPath, geminiDownloadPath: geminiPath });
+            imageData.status = 'gemini_complete';
+            imageData.geminiPath = geminiPath;
+            imageData.geminiDownloadPath = geminiPath;
             
             // Process with Picsart pipeline: Background Removal → Upscaling (background optional per job)
             let finalProcessedPath = geminiPath;
@@ -734,7 +582,7 @@ async function processImageWithNanoBanana(imageData) {
             // Step 1: Remove background using Picsart (optional)
             try {
                 if (imageData.removeBg && PICSART_API_KEY) {
-                    updateJobStatus(imageData.jobId, 'removing_background');
+                    imageData.status = 'removing_background';
                     bgRemovedPath = await processPicsartBackgroundRemoval(geminiPath);
                     finalProcessedPath = bgRemovedPath;
                     console.log('Background removal successful');
@@ -754,7 +602,7 @@ async function processImageWithNanoBanana(imageData) {
             // Step 2: Upscale the image using Picsart (optional)
             try {
                 if (PICSART_API_KEY) {
-                    updateJobStatus(imageData.jobId, 'upscaling_image');
+                    imageData.status = 'upscaling_image';
                     const upscaledPath = await processPicsartUpscaling(finalProcessedPath, 2);
                 
                     // Clean up intermediate files only if upscaling succeeded
@@ -777,17 +625,15 @@ async function processImageWithNanoBanana(imageData) {
             // Update final status based on what succeeded
             if (pipelineErrors.length === 0) {
                 console.log(`Complete pipeline processing finished: ${finalProcessedPath}`);
-                updateJobStatus(imageData.jobId, 'pipeline_complete');
+                imageData.status = 'pipeline_complete';
             } else if (pipelineErrors.length === 1) {
                 console.log(`Partial pipeline success with fallback: ${finalProcessedPath}`);
-                updateJobStatus(imageData.jobId, 'partial_pipeline_success', { 
-                    pipelineErrors: pipelineErrors 
-                });
+                imageData.status = 'partial_pipeline_success';
+                imageData.pipelineErrors = pipelineErrors;
             } else {
                 console.log(`Pipeline failed, using Gemini output: ${finalProcessedPath}`);
-                updateJobStatus(imageData.jobId, 'picsart_failed_fallback', { 
-                    pipelineErrors: pipelineErrors 
-                });
+                imageData.status = 'picsart_failed_fallback';
+                imageData.pipelineErrors = pipelineErrors;
             }
             
             return { processedPath: finalProcessedPath };
@@ -818,11 +664,10 @@ async function processImageWithNanoBanana(imageData) {
         return await Promise.race([processingPromise, timeoutPromise]);
     } catch (error) {
         // Update job status to error
-        updateJobStatus(imageData.jobId, 'error', { 
-            error: error.message,
-            endTime: Date.now(),
-            duration: Date.now() - jobStartTime 
-        });
+        imageData.status = 'error';
+        imageData.error = error.message;
+        imageData.endTime = Date.now();
+        imageData.duration = Date.now() - jobStartTime;
         throw error;
     }
 }
@@ -1000,6 +845,155 @@ async function processPicsartUpscaling(imagePath, upscaleFactor = 2) {
         }
         
         throw new Error(errorMessage);
+    }
+}
+
+function buildJobResponsePayload(job) {
+    const baseName = path.basename(job.originalName || 'image', path.extname(job.originalName || '')) || 'image';
+    const response = {
+        jobId: job.jobId,
+        status: job.status,
+        originalName: job.originalName,
+        pipelineErrors: job.pipelineErrors || [],
+        meta: {
+            baseName,
+            removeBg: job.removeBg
+        }
+    };
+
+    if (job.processedPath && fs.existsSync(job.processedPath)) {
+        const finalToken = createDownloadToken(job.processedPath);
+        response.previewUrl = buildPreviewUrl(job.processedPath);
+        response.downloadTokens = {
+            ...response.downloadTokens,
+            final: finalToken
+        };
+        const finalExt = path.extname(job.processedPath) || '.png';
+        response.downloadFilenames = {
+            ...response.downloadFilenames,
+            final: `enhanced_${baseName}${ensureDotExtension(finalExt)}`
+        };
+    }
+
+    if (job.geminiDownloadPath && fs.existsSync(job.geminiDownloadPath)) {
+        const geminiToken = createDownloadToken(job.geminiDownloadPath);
+        response.geminiPreviewUrl = buildPreviewUrl(job.geminiDownloadPath);
+        response.downloadTokens = {
+            ...response.downloadTokens,
+            gemini: geminiToken
+        };
+        const geminiExt = path.extname(job.geminiDownloadPath) || '.png';
+        response.downloadFilenames = {
+            ...response.downloadFilenames,
+            gemini: `ai_only_${baseName}${ensureDotExtension(geminiExt)}`
+        };
+    }
+
+    if (job.error) {
+        response.error = job.error;
+    }
+
+    return response;
+}
+
+function buildPreviewUrl(filePath) {
+    const token = createDownloadToken(filePath);
+    return `/api/download-by-token?token=${encodeURIComponent(token)}&inline=1`;
+}
+
+function ensureDotExtension(ext) {
+    if (!ext) return '.png';
+    return ext.startsWith('.') ? ext : `.${ext}`;
+}
+
+function createDownloadToken(filePath) {
+    const absolutePath = path.resolve(filePath);
+    if (!absolutePath.startsWith(PROCESSED_DIR)) {
+        throw new Error('File path is outside of processed directory');
+    }
+
+    const payload = JSON.stringify({ path: absolutePath });
+    const signature = crypto
+        .createHmac('sha256', DOWNLOAD_TOKEN_SECRET)
+        .update(payload)
+        .digest('base64url');
+
+    const token = `${Buffer.from(payload).toString('base64url')}.${signature}`;
+    return token;
+}
+
+function decodeDownloadToken(token) {
+    const parts = token.split('.');
+    if (parts.length !== 2) {
+        throw new Error('Malformed token');
+    }
+
+    const [payloadB64, signature] = parts;
+    const payloadJson = Buffer.from(payloadB64, 'base64url').toString('utf8');
+    const expectedSignature = crypto
+        .createHmac('sha256', DOWNLOAD_TOKEN_SECRET)
+        .update(payloadJson)
+        .digest('base64url');
+
+    if (signature !== expectedSignature) {
+        throw new Error('Invalid token signature');
+    }
+
+    const payload = JSON.parse(payloadJson);
+    const resolvedPath = path.resolve(payload.path);
+
+    if (!resolvedPath.startsWith(PROCESSED_DIR)) {
+        throw new Error('Token path not allowed');
+    }
+
+    if (!fs.existsSync(resolvedPath)) {
+        throw new Error('File not found');
+    }
+
+    return resolvedPath;
+}
+
+async function streamImageFile({ filePath, requestedFormat, res, inline, downloadName }) {
+    if (!fs.existsSync(filePath)) {
+        res.status(404).json({ error: 'File not found on disk' });
+        return;
+    }
+
+    try {
+        const sourceBuffer = fs.readFileSync(filePath);
+        const actualExt = path.extname(filePath) || '.png';
+        let mimeType = getMimeType(filePath);
+        let outputBuffer = sourceBuffer;
+        let filename = downloadName || path.basename(filePath);
+
+        if (requestedFormat) {
+            let transformer = sharp(sourceBuffer);
+            if (requestedFormat === 'png') {
+                transformer = transformer.png({ compressionLevel: 9 });
+                mimeType = 'image/png';
+            } else {
+                transformer = transformer
+                    .flatten({ background: { r: 255, g: 255, b: 255 } })
+                    .jpeg({ quality: 92, mozjpeg: true });
+                mimeType = 'image/jpeg';
+            }
+
+            outputBuffer = await transformer.toBuffer();
+
+            const normalizedFormat = requestedFormat === 'jpeg' ? 'jpg' : requestedFormat;
+            const baseName = filename ? filename.replace(path.extname(filename), '') : path.basename(filePath, actualExt);
+            filename = `${baseName}.${normalizedFormat}`;
+        } else if (!mimeType.startsWith('image/')) {
+            // Default to png for unknown types during inline preview
+            mimeType = 'image/png';
+        }
+
+        res.setHeader('Content-Type', mimeType);
+        res.setHeader('Content-Disposition', `${inline ? 'inline' : 'attachment'}; filename="${filename}"`);
+        res.send(outputBuffer);
+    } catch (error) {
+        console.error('streamImageFile error:', error);
+        res.status(500).json({ error: 'Could not prepare download' });
     }
 }
 
