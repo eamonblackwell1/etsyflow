@@ -31,7 +31,15 @@ function assertApiKey() {
 // Middleware
 app.use(cors());
 app.use(express.json());
-app.use(express.static('.'));
+
+// Serve static site from an absolute path (works in Vercel Node runtime)
+const STATIC_DIR = path.resolve(__dirname);
+app.use(express.static(STATIC_DIR));
+
+// Explicit root route to avoid "Cannot GET /" in some runtimes
+app.get('/', (req, res) => {
+	return res.sendFile(path.join(STATIC_DIR, 'index.html'));
+});
 
 // Configure multer for file uploads
 const storage = multer.diskStorage({
