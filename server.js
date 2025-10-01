@@ -618,7 +618,7 @@ async function processImageWithNanoBanana(imageData) {
 				'Content-Type': 'application/json',
 				'x-goog-api-key': GEMINI_API_KEY
 			},
-			timeout: 60000, // 60 second timeout
+			timeout: 25000, // 25 second timeout (within Vercel limits)
 			maxContentLength: 50 * 1024 * 1024, // 50MB max response
 			maxBodyLength: 50 * 1024 * 1024
 		}).catch(error => {
@@ -631,7 +631,7 @@ async function processImageWithNanoBanana(imageData) {
 			});
 			
 			if (error.code === 'ECONNABORTED') {
-				throw new Error('Gemini API request timed out after 60 seconds');
+				throw new Error('Gemini API request timed out after 25 seconds (Vercel function limit)');
 			} else if (error.response?.status === 401) {
 				throw new Error('Invalid API key - please check GEMINI_API_KEY in Vercel dashboard');
 			} else if (error.response?.status === 403) {
