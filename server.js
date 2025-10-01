@@ -7,7 +7,12 @@ const fs = require('fs');
 const path = require('path');
 const sharp = require('sharp');
 const os = require('os');
-require('dotenv').config();
+// Load environment variables
+// Note: On Vercel, env vars come from dashboard, not .env file
+if (process.env.NODE_ENV !== 'production' && !process.env.VERCEL) {
+    require('dotenv').config();
+    console.log('Loaded .env file (local development)');
+}
 // Using direct REST call to Gemini API (v1beta) to avoid SDK version mismatches
 
 const app = express();
@@ -17,6 +22,20 @@ const PORT = process.env.PORT || 3000;
 // Support common env names on Vercel
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY || process.env.NEXT_PUBLIC_GOOGLE_API_KEY;
 const PICSART_API_KEY = process.env.PICSART_API_KEY;
+
+// Log startup environment info
+console.log('Server starting with environment:', {
+    NODE_ENV: process.env.NODE_ENV,
+    VERCEL: !!process.env.VERCEL,
+    PORT: process.env.PORT || 3000,
+    API_KEYS: {
+        GEMINI_API_KEY: !!process.env.GEMINI_API_KEY,
+        GOOGLE_API_KEY: !!process.env.GOOGLE_API_KEY,
+        NEXT_PUBLIC_GOOGLE_API_KEY: !!process.env.NEXT_PUBLIC_GOOGLE_API_KEY,
+        PICSART_API_KEY: !!process.env.PICSART_API_KEY,
+        resolvedGeminiKey: !!GEMINI_API_KEY
+    }
+});
 
 const STATIC_PROMPT = `Role
 You are an expert conceptual graphic designer. Create a new, original graphic inspired by an uploaded reference image.
@@ -71,6 +90,12 @@ const ENABLE_BG_REMOVAL = (process.env.ENABLE_BG_REMOVAL || 'true').toLowerCase(
 
 function assertGeminiKey() {
     if (!GEMINI_API_KEY || GEMINI_API_KEY.trim() === '') {
+        console.error('Missing API key. Checked:', {
+            GEMINI_API_KEY: !!process.env.GEMINI_API_KEY,
+            GOOGLE_API_KEY: !!process.env.GOOGLE_API_KEY,
+            NEXT_PUBLIC_GOOGLE_API_KEY: !!process.env.NEXT_PUBLIC_GOOGLE_API_KEY,
+            allEnvKeys: Object.keys(process.env).filter(k => k.includes('KEY')).sort()
+        });
         throw new Error('GEMINI_API_KEY (or GOOGLE_API_KEY) environment variable is not set');
     }
 }
@@ -128,9 +153,44 @@ const processingJobs = new Map();
 
 // API Routes
 
-// Health check
+// Simple test endpoint
+app.get('/api/test', (req, res) => {
+    res.json({
+        message: 'API is working',
+        timestamp: new Date().toISOString(),
+        env: {
+            node: process.version,
+            platform: process.platform,
+            isVercel: !!process.env.VERCEL,
+            hasKeys: {
+                anyGeminiKey: !!(process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY || process.env.NEXT_PUBLIC_GOOGLE_API_KEY),
+                resolvedGeminiKey: !!GEMINI_API_KEY
+            }
+        }
+    });
+});
+
+// Health check with debug info
 app.get('/api/health', (req, res) => {
-    res.json({ status: 'ok', message: 'Server is running' });
+    const hasGeminiKey = !!(GEMINI_API_KEY && GEMINI_API_KEY.trim());
+    const hasPicsartKey = !!(PICSART_API_KEY && PICSART_API_KEY.trim());
+    
+    res.json({ 
+        status: 'ok', 
+        message: 'Server is running',
+        environment: process.env.NODE_ENV || 'development',
+        platform: process.env.VERCEL ? 'vercel' : 'local',
+        keys: {
+            gemini: hasGeminiKey,
+            picsart: hasPicsartKey
+        },
+        // Debug info (remove in production)
+        debug: {
+            geminiKeyLength: GEMINI_API_KEY ? GEMINI_API_KEY.length : 0,
+            picsartKeyLength: PICSART_API_KEY ? PICSART_API_KEY.length : 0,
+            envKeys: Object.keys(process.env).filter(k => k.includes('API_KEY') || k.includes('GOOGLE')).map(k => `${k}: ${process.env[k] ? 'set' : 'unset'}`)
+        }
+    });
 });
 
 // Process single image
