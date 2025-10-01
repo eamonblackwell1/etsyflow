@@ -84,10 +84,8 @@ app.use(express.json());
 const STATIC_DIR = path.resolve(__dirname, 'public');
 app.use(express.static(STATIC_DIR));
 
-// Fallback routes for Single Page App support
-app.get('*', (req, res) => {
-	return res.sendFile(path.join(STATIC_DIR, 'index.html'));
-});
+// NOTE: SPA fallback must be registered AFTER API routes so it doesn't
+// intercept GET requests like /api/job/:id. We'll add it near the end.
 
 // Configure multer for file uploads
 const storage = multer.diskStorage({
@@ -794,6 +792,13 @@ async function callNanoBananaAPI(imagePath, prompt) {
     
     throw new Error('Nano banana API integration not yet implemented');
 }
+
+// -------------------------
+// SPA Fallback (register last)
+// -------------------------
+app.get('*', (req, res) => {
+    return res.sendFile(path.join(STATIC_DIR, 'index.html'));
+});
 
 // Start server
 app.listen(PORT, () => {
