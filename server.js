@@ -33,7 +33,8 @@ console.log('Server starting with environment:', {
         GOOGLE_API_KEY: !!process.env.GOOGLE_API_KEY,
         NEXT_PUBLIC_GOOGLE_API_KEY: !!process.env.NEXT_PUBLIC_GOOGLE_API_KEY,
         PICSART_API_KEY: !!process.env.PICSART_API_KEY,
-        resolvedGeminiKey: !!GEMINI_API_KEY
+        resolvedGeminiKey: !!GEMINI_API_KEY,
+        resolvedValue: GEMINI_API_KEY ? `${GEMINI_API_KEY.substring(0, 8)}...` : 'NOT SET'
     }
 });
 
@@ -177,7 +178,7 @@ app.get('/api/test-gemini', async (req, res) => {
             return res.status(400).json({ error: 'No Gemini API key configured' });
         }
         
-        const url = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent';
+        const url = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-image-preview:generateContent';
         const testBody = {
             contents: [{
                 parts: [{ text: 'Say "API is working" and nothing else.' }]
@@ -598,8 +599,7 @@ async function processImageWithNanoBanana(imageData) {
 		const finalPrompt = `${instructionPreamble}\n\nUser instructions:\n${imageData.prompt}`;
 
 		// Direct REST request to v1beta endpoint per official docs
-		// Try different model names - Gemini 2.0 Flash is the latest
-		const url = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent';
+		const url = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-image-preview:generateContent';
 		const body = {
 			generationConfig: { temperature: 0.3 },
 			contents: [
