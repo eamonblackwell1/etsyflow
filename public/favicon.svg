@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32">
+  <!-- Dollar bill background -->
+  <rect x="2" y="4" width="28" height="24" rx="2" fill="#228B22" stroke="#006400" stroke-width="1"/>
+  
+  <!-- Dollar sign -->
+  <text x="16" y="20" font-family="Arial, sans-serif" font-size="16" font-weight="bold" text-anchor="middle" fill="white">$</text>
+  
+  <!-- Decorative elements -->
+  <circle cx="6" cy="8" r="1" fill="white" opacity="0.7"/>
+  <circle cx="26" cy="8" r="1" fill="white" opacity="0.7"/>
+  <circle cx="6" cy="24" r="1" fill="white" opacity="0.7"/>
+  <circle cx="26" cy="24" r="1" fill="white" opacity="0.7"/>
+  
+  <!-- Corner decorations -->
+  <rect x="4" y="6" width="2" height="1" fill="white" opacity="0.5"/>
+  <rect x="26" y="6" width="2" height="1" fill="white" opacity="0.5"/>
+  <rect x="4" y="25" width="2" height="1" fill="white" opacity="0.5"/>
+  <rect x="26" y="25" width="2" height="1" fill="white" opacity="0.5"/>
+</svg>

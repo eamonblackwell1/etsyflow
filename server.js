@@ -33,24 +33,12 @@ app.use(cors());
 app.use(express.json());
 
 // Serve static site from an absolute path (works in Vercel Node runtime)
-const STATIC_DIR = path.resolve(__dirname);
+const STATIC_DIR = path.resolve(__dirname, 'public');
 app.use(express.static(STATIC_DIR));
 
-// Explicit routes for static assets (Vercel Node runtime sometimes skips express.static)
-app.get('/', (req, res) => {
+// Fallback routes for Single Page App support
+app.get('*', (req, res) => {
 	return res.sendFile(path.join(STATIC_DIR, 'index.html'));
-});
-
-app.get('/styles.css', (req, res) => {
-	return res.type('text/css').sendFile(path.join(STATIC_DIR, 'styles.css'));
-});
-
-app.get('/script.js', (req, res) => {
-	return res.type('application/javascript').sendFile(path.join(STATIC_DIR, 'script.js'));
-});
-
-app.get(['/favicon.ico', '/favicon-16.png', '/favicon-32.png', '/favicon.svg'], (req, res) => {
-	return res.sendFile(path.join(STATIC_DIR, req.path.replace(/^\/+/, '')));
 });
 
 // Configure multer for file uploads
