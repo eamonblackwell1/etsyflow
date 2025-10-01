@@ -64,7 +64,6 @@ class ImageProcessor {
         const processBtn = document.getElementById('processBtn');
         const removeBgToggle = document.getElementById('removeBgToggle');
 
-        // Background removal preference (defaults to unchecked)
         this.removeBg = removeBgToggle ? removeBgToggle.checked : false;
         if (removeBgToggle) {
             removeBgToggle.addEventListener('change', (e) => {
@@ -72,18 +71,11 @@ class ImageProcessor {
             });
         }
 
-        // Click to select files
         uploadArea.addEventListener('click', () => fileInput.click());
-
-        // File selection
         fileInput.addEventListener('change', (e) => this.handleFiles(e.target.files));
-
-        // Drag and drop
         uploadArea.addEventListener('dragover', this.handleDragOver.bind(this));
         uploadArea.addEventListener('dragleave', this.handleDragLeave.bind(this));
         uploadArea.addEventListener('drop', this.handleDrop.bind(this));
-
-        // Process button
         processBtn.addEventListener('click', () => this.processAllImages());
     }
 
@@ -109,7 +101,7 @@ class ImageProcessor {
                 alert(`${file.name} is not an image file`);
                 return false;
             }
-            if (file.size > 10 * 1024 * 1024) { // 10MB limit
+            if (file.size > 10 * 1024 * 1024) {
                 alert(`${file.name} is too large (max 10MB)`);
                 return false;
             }
@@ -134,8 +126,7 @@ class ImageProcessor {
 
         this.images.push(imageData);
         this.createImageCard(imageData);
-        
-        // Create preview URL
+
         const reader = new FileReader();
         reader.onload = (e) => {
             imageData.originalUrl = e.target.result;
@@ -156,13 +147,13 @@ class ImageProcessor {
                 <img class="image-preview" id="original_${imageData.id}" alt="Original">
                 <p class="image-name">${imageData.name}</p>
             </div>
-            
+
             <div class="processed-section">
                 <h4>Processed</h4>
                 <div class="image-status status-queued" id="status_${imageData.id}">Queued</div>
                 <img class="image-preview" id="processed_${imageData.id}" style="display: none;" alt="Processed">
             </div>
-            
+
             <div class="image-actions">
                 <div class="download-controls">
                     <label for="format_${imageData.id}">Format:</label>
@@ -206,7 +197,6 @@ class ImageProcessor {
             processedImg.style.display = 'block';
         }
 
-        // Update button states
         const downloadBtn = card.querySelector('.btn-primary');
         const downloadGeminiBtn = document.getElementById(`download_gemini_${imageData.id}`);
         const downloadFinalBtn = document.getElementById(`download_final_${imageData.id}`);
@@ -247,7 +237,7 @@ class ImageProcessor {
     updateProcessButton() {
         const processBtn = document.getElementById('processBtn');
         const hasImages = this.images.length > 0;
-        
+
         processBtn.disabled = !hasImages;
         processBtn.textContent = `Process ${this.images.length} Image${this.images.length !== 1 ? 's' : ''}`;
     }
@@ -255,10 +245,8 @@ class ImageProcessor {
     async processAllImages() {
         if (this.images.length === 0) return;
 
-        // Show overall progress
         const progressSection = document.getElementById('overallProgress');
         progressSection.style.display = 'block';
-        
         this.updateOverallProgress(0);
 
         let completedCount = 0;
@@ -282,7 +270,6 @@ class ImageProcessor {
             this.updateOverallProgress(completedCount);
         }
 
-        // Hide progress after completion
         setTimeout(() => {
             progressSection.style.display = 'none';
         }, 2000);
@@ -348,15 +335,13 @@ class ImageProcessor {
     updateOverallProgress(completedCount) {
         const progressText = document.getElementById('progressText');
         const progressFill = document.getElementById('progressFill');
-        
+
         const total = this.images.length;
         const percentage = (completedCount / total) * 100;
-        
+
         progressText.textContent = `Processing ${completedCount} of ${total} images...`;
         progressFill.style.width = `${percentage}%`;
     }
-
-    // Reprompt feature removed: using a universal static prompt
 
     downloadImage(imageId) {
         const imageData = this.images.find(img => img.id === imageId);
@@ -389,5 +374,4 @@ class ImageProcessor {
     }
 }
 
-// Initialize the app
 const imageProcessor = new ImageProcessor();
