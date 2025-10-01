@@ -171,6 +171,31 @@ app.get('/api/test', (req, res) => {
     });
 });
 
+// Test timeout logic
+app.get('/api/test-timeout', async (req, res) => {
+    const testDelay = parseInt(req.query.delay) || 5000;
+    console.log(`Testing timeout with ${testDelay}ms delay`);
+    
+    const timeoutPromise = new Promise((_, reject) => {
+        setTimeout(() => {
+            reject(new Error(`Test timed out after 3 seconds`));
+        }, 3000);
+    });
+    
+    const delayPromise = new Promise((resolve) => {
+        setTimeout(() => {
+            resolve({ message: `Completed after ${testDelay}ms` });
+        }, testDelay);
+    });
+    
+    try {
+        const result = await Promise.race([delayPromise, timeoutPromise]);
+        res.json({ success: true, result, actualDelay: testDelay });
+    } catch (error) {
+        res.json({ success: false, error: error.message, actualDelay: testDelay });
+    }
+});
+
 // Test Gemini API connectivity
 app.get('/api/test-gemini', async (req, res) => {
     try {
@@ -583,94 +608,94 @@ async function processImageWithNanoBanana(imageData) {
     // Create the main processing promise
     const processingPromise = (async () => {
         try {
-        console.log(`[${imageData.jobId}] Starting processing: ${imageData.originalName} with prompt: "${imageData.prompt}"`);
-        
-        // Update status to Gemini processing with timestamp
-        updateJobStatus(imageData.jobId, 'gemini_processing', { startTime: jobStartTime });
-        
-        // Read the image file and convert to base64
-        const imageBuffer = fs.readFileSync(imageData.originalPath);
-        const imageBase64 = imageBuffer.toString('base64');
-        const imageMimeType = getMimeType(imageData.originalPath);
+            console.log(`[${imageData.jobId}] Starting processing: ${imageData.originalName} with prompt: "${imageData.prompt}"`);
+            
+            // Update status to Gemini processing with timestamp
+            updateJobStatus(imageData.jobId, 'gemini_processing', { startTime: jobStartTime });
+            
+            // Read the image file and convert to base64
+            const imageBuffer = fs.readFileSync(imageData.originalPath);
+            const imageBase64 = imageBuffer.toString('base64');
+            const imageMimeType = getMimeType(imageData.originalPath);
 
-		assertGeminiKey();
+            assertGeminiKey();
 
-		// Build a stricter prompt wrapper to improve adherence to constraints
-		const instructionPreamble = [
-			'You are an expert apparel graphic designer. Follow ALL constraints strictly:',
-			'- Use the uploaded image ONLY as inspiration for motif, silhouette, and palette.',
-			'- OUTPUT: a single isolated design suitable for printing on apparel.',
-			'- TRANSPARENT background, no mockups, no garment, no model, no scene.',
-			'- NO text, letters, numbers, watermarks, brand marks, or logos.',
-			'- Clean contours, large readable shapes; keep style simple and legible.',
-			'',
-			'If the user asks for a mockup or scene, IGNORE that and produce only the isolated design.'
-		].join('\n');
+            // Build a stricter prompt wrapper to improve adherence to constraints
+            const instructionPreamble = [
+                'You are an expert apparel graphic designer. Follow ALL constraints strictly:',
+                '- Use the uploaded image ONLY as inspiration for motif, silhouette, and palette.',
+                '- OUTPUT: a single isolated design suitable for printing on apparel.',
+                '- TRANSPARENT background, no mockups, no garment, no model, no scene.',
+                '- NO text, letters, numbers, watermarks, brand marks, or logos.',
+                '- Clean contours, large readable shapes; keep style simple and legible.',
+                '',
+                'If the user asks for a mockup or scene, IGNORE that and produce only the isolated design.'
+            ].join('\n');
 
-		const finalPrompt = `${instructionPreamble}\n\nUser instructions:\n${imageData.prompt}`;
+            const finalPrompt = `${instructionPreamble}\n\nUser instructions:\n${imageData.prompt}`;
 
-		// Direct REST request to v1beta endpoint per official docs
-		const url = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-image-preview:generateContent';
-		const body = {
-			generationConfig: { temperature: 0.3 },
-			contents: [
-				{
-					parts: [
-						{ text: finalPrompt },
-						{ inlineData: { mimeType: imageMimeType, data: imageBase64 } }
-					]
-				}
-			]
-		};
-		// Add timeout and better error handling
-		console.log(`[${imageData.jobId}] Calling Gemini API with timeout 25s...`);
-		console.log(`[${imageData.jobId}] Image size: ${Math.round(imageBuffer.length / 1024)}KB`);
-		console.log(`[${imageData.jobId}] API URL: ${url}`);
-		
-		const startTime = Date.now();
-		const { data } = await axios.post(url, body, {
-			headers: {
-				'Content-Type': 'application/json',
-				'x-goog-api-key': GEMINI_API_KEY
-			},
-			timeout: 25000, // 25 second timeout (within Vercel limits)
-			maxContentLength: 50 * 1024 * 1024, // 50MB max response
-			maxBodyLength: 50 * 1024 * 1024
-		}).catch(error => {
-			const elapsed = Date.now() - startTime;
-			console.error(`[${imageData.jobId}] Gemini API request failed after ${elapsed}ms:`, {
-				status: error.response?.status,
-				statusText: error.response?.statusText,
-				data: error.response?.data,
-				code: error.code,
-				message: error.message
-			});
-			
-			if (error.code === 'ECONNABORTED') {
-				throw new Error('Gemini API request timed out after 25 seconds (Vercel function limit)');
-			} else if (error.response?.status === 401) {
-				throw new Error('Invalid API key - please check GEMINI_API_KEY in Vercel dashboard');
-			} else if (error.response?.status === 403) {
-				throw new Error('API key is valid but lacks permissions or quota exceeded');
-			} else if (error.response?.status === 400) {
-				const detail = error.response?.data?.error?.message || 'Invalid request';
-				throw new Error(`Gemini API error: ${detail}`);
-			}
-			throw error;
-		});
-		
-		const elapsed = Date.now() - startTime;
-		console.log(`[${imageData.jobId}] Gemini API response received after ${elapsed}ms`);
-		console.log(`[${imageData.jobId}] Response status: SUCCESS`);
+            // Direct REST request to v1beta endpoint per official docs
+            const url = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-image-preview:generateContent';
+            const body = {
+                generationConfig: { temperature: 0.3 },
+                contents: [
+                    {
+                        parts: [
+                            { text: finalPrompt },
+                            { inlineData: { mimeType: imageMimeType, data: imageBase64 } }
+                        ]
+                    }
+                ]
+            };
+            // Add timeout and better error handling
+            console.log(`[${imageData.jobId}] Calling Gemini API with timeout 25s...`);
+            console.log(`[${imageData.jobId}] Image size: ${Math.round(imageBuffer.length / 1024)}KB`);
+            console.log(`[${imageData.jobId}] API URL: ${url}`);
+            
+            const startTime = Date.now();
+            const { data } = await axios.post(url, body, {
+                headers: {
+                    'Content-Type': 'application/json',
+                    'x-goog-api-key': GEMINI_API_KEY
+                },
+                timeout: 25000, // 25 second timeout (within Vercel limits)
+                maxContentLength: 50 * 1024 * 1024, // 50MB max response
+                maxBodyLength: 50 * 1024 * 1024
+            }).catch(error => {
+                const elapsed = Date.now() - startTime;
+                console.error(`[${imageData.jobId}] Gemini API request failed after ${elapsed}ms:`, {
+                    status: error.response?.status,
+                    statusText: error.response?.statusText,
+                    data: error.response?.data,
+                    code: error.code,
+                    message: error.message
+                });
+                
+                if (error.code === 'ECONNABORTED') {
+                    throw new Error('Gemini API request timed out after 25 seconds (Vercel function limit)');
+                } else if (error.response?.status === 401) {
+                    throw new Error('Invalid API key - please check GEMINI_API_KEY in Vercel dashboard');
+                } else if (error.response?.status === 403) {
+                    throw new Error('API key is valid but lacks permissions or quota exceeded');
+                } else if (error.response?.status === 400) {
+                    const detail = error.response?.data?.error?.message || 'Invalid request';
+                    throw new Error(`Gemini API error: ${detail}`);
+                }
+                throw error;
+            });
+            
+            const elapsed = Date.now() - startTime;
+            console.log(`[${imageData.jobId}] Gemini API response received after ${elapsed}ms`);
+            console.log(`[${imageData.jobId}] Response status: SUCCESS`);
 
-		// Check if the response contains generated image data
-		const candidates = data && data.candidates;
-        if (!candidates || candidates.length === 0) {
-            throw new Error('No candidates returned from Gemini API');
-        }
-        
-        const candidate = candidates[0];
-        const parts = candidate.content && candidate.content.parts ? candidate.content.parts : [];
+            // Check if the response contains generated image data
+            const candidates = data && data.candidates;
+            if (!candidates || candidates.length === 0) {
+                throw new Error('No candidates returned from Gemini API');
+            }
+            
+            const candidate = candidates[0];
+            const parts = candidate.content && candidate.content.parts ? candidate.content.parts : [];
         
         // Look for inline image data in the response
         const imageParts = parts.filter(part => part.inlineData && part.inlineData.data);
