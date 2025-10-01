@@ -13,8 +13,9 @@ require('dotenv').config();
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// API keys (required)
-const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
+// API keys (Gemini required, Picsart optional)
+// Support common env names on Vercel
+const GEMINI_API_KEY = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY || process.env.NEXT_PUBLIC_GOOGLE_API_KEY;
 const PICSART_API_KEY = process.env.PICSART_API_KEY;
 
 const STATIC_PROMPT = `Role
@@ -68,13 +69,10 @@ Generate 1 version that meets the above rules.`;
 // Feature flags
 const ENABLE_BG_REMOVAL = (process.env.ENABLE_BG_REMOVAL || 'true').toLowerCase() !== 'false';
 
-function assertApiKey() {
-	if (!GEMINI_API_KEY || GEMINI_API_KEY.trim() === '') {
-		throw new Error('GEMINI_API_KEY environment variable is not set');
-	}
-	if (!PICSART_API_KEY || PICSART_API_KEY.trim() === '') {
-		throw new Error('PICSART_API_KEY environment variable is not set');
-	}
+function assertGeminiKey() {
+    if (!GEMINI_API_KEY || GEMINI_API_KEY.trim() === '') {
+        throw new Error('GEMINI_API_KEY (or GOOGLE_API_KEY) environment variable is not set');
+    }
 }
 
 // Middleware
@@ -485,7 +483,7 @@ async function processImageWithNanoBanana(imageData) {
         const imageBase64 = imageBuffer.toString('base64');
         const imageMimeType = getMimeType(imageData.originalPath);
 
-		assertApiKey();
+		assertGeminiKey();
 
 		// Build a stricter prompt wrapper to improve adherence to constraints
 		const instructionPreamble = [
@@ -564,15 +562,15 @@ async function processImageWithNanoBanana(imageData) {
             let bgRemovedPath = null;
             let pipelineErrors = [];
             
-            // Step 1: Remove background using Picsart
+            // Step 1: Remove background using Picsart (optional)
             try {
-                if (imageData.removeBg) {
+                if (imageData.removeBg && PICSART_API_KEY) {
                     updateJobStatus(imageData.jobId, 'removing_background');
                     bgRemovedPath = await processPicsartBackgroundRemoval(geminiPath);
                     finalProcessedPath = bgRemovedPath;
                     console.log('Background removal successful');
                 } else {
-                    console.log('Background removal disabled for this job; skipping to upscaling');
+                    console.log('Background removal disabled or PICSART_API_KEY missing; skipping to upscaling');
                     bgRemovedPath = geminiPath;
                     finalProcessedPath = geminiPath;
                 }
@@ -584,19 +582,23 @@ async function processImageWithNanoBanana(imageData) {
                 finalProcessedPath = geminiPath;
             }
             
-            // Step 2: Upscale the image using Picsart (use whichever image we have)
+            // Step 2: Upscale the image using Picsart (optional)
             try {
-                updateJobStatus(imageData.jobId, 'upscaling_image');
-                const upscaledPath = await processPicsartUpscaling(finalProcessedPath, 2);
+                if (PICSART_API_KEY) {
+                    updateJobStatus(imageData.jobId, 'upscaling_image');
+                    const upscaledPath = await processPicsartUpscaling(finalProcessedPath, 2);
                 
-                // Clean up intermediate files only if upscaling succeeded
-                if (bgRemovedPath && bgRemovedPath !== geminiPath && fs.existsSync(bgRemovedPath)) {
-                    fs.unlinkSync(bgRemovedPath);
+                    // Clean up intermediate files only if upscaling succeeded
+                    if (bgRemovedPath && bgRemovedPath !== geminiPath && fs.existsSync(bgRemovedPath)) {
+                        fs.unlinkSync(bgRemovedPath);
+                    }
+                    // Keep the Gemini PNG for AI-only downloads
+                    
+                    finalProcessedPath = upscaledPath;
+                    console.log('Upscaling successful');
+                } else {
+                    console.log('PICSART_API_KEY missing; skipping upscaling');
                 }
-                // Keep the Gemini PNG for AI-only downloads
-                
-                finalProcessedPath = upscaledPath;
-                console.log('Upscaling successful');
             } catch (upscaleError) {
                 console.error('Upscaling failed:', upscaleError.message);
                 pipelineErrors.push(`Upscaling: ${upscaleError.message}`);
@@ -851,12 +853,12 @@ app.get('*', (req, res) => {
 app.listen(PORT, () => {
     console.log(`Server running on http://localhost:${PORT}`);
     if (!GEMINI_API_KEY) {
-        console.warn('Warning: GEMINI_API_KEY is not set. Requests will fail until it is provided.');
+        console.warn('Warning: GEMINI_API_KEY/GOOGLE_API_KEY is not set. Requests will fail until it is provided.');
     } else {
         console.log('GEMINI_API_KEY detected. Using Gemini API (REST) for image generation.');
     }
     if (!PICSART_API_KEY) {
-        console.warn('Warning: PICSART_API_KEY is not set. Background removal and upscaling will fail until it is provided.');
+        console.warn('Note: PICSART_API_KEY is not set. Background removal and upscaling will be skipped.');
     } else {
         console.log('PICSART_API_KEY detected. Using Picsart API for background removal and upscaling.');
     }
