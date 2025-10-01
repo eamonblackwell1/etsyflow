@@ -71,6 +71,22 @@ A web application for bulk processing images through Google's nano banana API.
 
 ## Troubleshooting
 
+## Environment Variables
+
+- **GEMINI_API_KEY**: Google Gemini API key (required)
+- **PICSART_API_KEY**: Picsart API key for background removal and upscaling (optional but recommended)
+- **ENABLE_BG_REMOVAL**: true/false (default true)
+- **PORT**: default 3000 for local
+
 - If images fail to process, check the server console for error messages
 - Ensure your prompts are specific and descriptive for best results
 - Large images may take longer to process
+
+## Deploying to Vercel
+
+1. Push to GitHub.
+2. In Vercel, import the repo.
+3. Set Environment Variables: GEMINI_API_KEY, PICSART_API_KEY (optional), ENABLE_BG_REMOVAL (optional).
+4. Build & deploy.
+
+Note: This app runs an Express server on PORT. Use a Node Server preset or set the Start Command to npm start.
