@@ -294,9 +294,73 @@ class ImageProcessor {
             }
 
             const result = await response.json();
-            this.applyProcessingResult(imageData, result);
+
+            // Check if we got a job ID (async processing) or direct result (sync processing)
+            if (result.jobId) {
+                // Async processing - start polling
+                console.log(`Job ${result.jobId} created, starting polling...`);
+                imageData.jobId = result.jobId;
+                imageData.status = 'processing';
+                this.updateImageCard(imageData);
+                this.logStatus(imageData, 'Processing started...');
+
+                // Start polling for job status
+                await this.pollJobStatus(imageData);
+            } else {
+                // Sync processing (fallback for older version)
+                this.applyProcessingResult(imageData, result);
+            }
         } catch (error) {
             console.error('Process image error:', error);
+            throw error;
+        }
+    }
+
+    async pollJobStatus(imageData, retries = 0) {
+        const maxRetries = 60; // 5 minutes with 5 second intervals
+        const pollInterval = 5000; // 5 seconds
+
+        try {
+            const response = await fetch(`/api/job/${imageData.jobId}`);
+
+            if (!response.ok) {
+                if (response.status === 404 && retries < 3) {
+                    // Job might not be ready yet, retry
+                    await new Promise(resolve => setTimeout(resolve, 1000));
+                    return this.pollJobStatus(imageData, retries + 1);
+                }
+                throw new Error(`Failed to check job status: ${response.status}`);
+            }
+
+            const result = await response.json();
+            console.log(`Job ${imageData.jobId}: Status updated to ${result.status}`);
+
+            // Update UI with current status
+            this.applyProcessingResult(imageData, result);
+
+            // Check if job is complete or errored
+            const completedStates = [
+                'complete', 'pipeline_complete', 'partial_pipeline_success',
+                'picsart_failed_fallback', 'error'
+            ];
+
+            if (completedStates.includes(result.status)) {
+                console.log(`Job ${imageData.jobId} completed with status: ${result.status}`);
+                return; // Job is done
+            }
+
+            // Continue polling if not complete
+            if (retries < maxRetries) {
+                await new Promise(resolve => setTimeout(resolve, pollInterval));
+                return this.pollJobStatus(imageData, retries + 1);
+            } else {
+                throw new Error('Processing timeout - exceeded 5 minutes');
+            }
+        } catch (error) {
+            console.error(`Polling error for job ${imageData.jobId}:`, error);
+            imageData.status = 'error';
+            imageData.error = error.message;
+            this.updateImageCard(imageData);
             throw error;
         }
     }

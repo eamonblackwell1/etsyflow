@@ -256,13 +256,17 @@ app.get('/api/health', (req, res) => {
     });
 });
 
-// Process single image
+// In-memory job storage (works with Vercel's serverless architecture)
+const processingJobs = new Map();
+
+// Process single image (async mode for Vercel)
 app.post('/api/process-image', (req, res) => {
     // Log request meta to help diagnose client issues
     try {
         console.log('Incoming /api/process-image', {
             contentType: req.headers['content-type'],
-            contentLength: req.headers['content-length']
+            contentLength: req.headers['content-length'],
+            isVercel: !!process.env.VERCEL
         });
     } catch (e) {}
 
@@ -277,8 +281,6 @@ app.post('/api/process-image', (req, res) => {
         }
 
         try {
-            // Some environments strip content-type boundaries; rely on multer success instead of strict check
-
             if (!req.file) {
                 return res.status(400).json({ error: 'No image file provided (field name must be "image")' });
             }
@@ -297,26 +299,55 @@ app.post('/api/process-image', (req, res) => {
                 originalName: req.file.originalname,
                 prompt,
                 removeBg,
-                status: 'processing',
-                createdAt: new Date()
+                status: 'queued',
+                createdAt: new Date(),
+                lastUpdate: new Date()
             };
 
-            try {
-                const result = await processImageWithNanoBanana(imageData);
-                imageData.processedPath = result?.processedPath || imageData.processedPath;
-                imageData.completedAt = new Date();
+            // Store job in memory
+            processingJobs.set(jobId, imageData);
 
-                const responsePayload = buildJobResponsePayload(imageData);
-
-                return res.json(responsePayload);
-            } catch (processingError) {
-                console.error('Processing error:', processingError);
-                imageData.status = 'error';
-                imageData.error = processingError.message;
-                imageData.completedAt = new Date();
-
-                return res.status(500).json({ error: processingError.message || 'Processing failed' });
+            // Clean up old jobs (older than 15 minutes)
+            const fifteenMinutesAgo = Date.now() - (15 * 60 * 1000);
+            for (const [id, job] of processingJobs.entries()) {
+                if (job.createdAt && job.createdAt.getTime() < fifteenMinutesAgo) {
+                    processingJobs.delete(id);
+                }
             }
+
+            // Start async processing
+            processImageWithNanoBanana(imageData)
+                .then(result => {
+                    imageData.processedPath = result?.processedPath || imageData.processedPath;
+                    imageData.geminiPath = result?.geminiPath;
+                    imageData.geminiDownloadPath = result?.geminiDownloadPath;
+                    imageData.completedAt = new Date();
+                    imageData.lastUpdate = new Date();
+
+                    // Update status based on result
+                    if (!imageData.status || imageData.status === 'processing') {
+                        imageData.status = 'complete';
+                    }
+
+                    processingJobs.set(jobId, imageData);
+                })
+                .catch(processingError => {
+                    console.error(`[${jobId}] Processing error:`, processingError);
+                    imageData.status = 'error';
+                    imageData.error = processingError.message;
+                    imageData.completedAt = new Date();
+                    imageData.lastUpdate = new Date();
+                    processingJobs.set(jobId, imageData);
+                });
+
+            // Return job ID immediately
+            console.log(`[${jobId}] Job created, returning to client for polling`);
+            return res.json({
+                jobId,
+                status: 'queued',
+                message: 'Processing started',
+                pollUrl: `/api/job/${jobId}`
+            });
 
         } catch (error) {
             console.error('Upload error:', error);
@@ -325,9 +356,34 @@ app.post('/api/process-image', (req, res) => {
     });
 });
 
-// Check job status
+// Check job status (re-enabled for async processing)
 app.get('/api/job/:jobId', (req, res) => {
-    return res.status(410).json({ error: 'Job polling has been removed. Re-run the request and wait for the response to finish.' });
+    const { jobId } = req.params;
+    const job = processingJobs.get(jobId);
+
+    if (!job) {
+        return res.status(404).json({ error: 'Job not found' });
+    }
+
+    // Log status for debugging
+    console.log(`[${jobId}] Status check: ${job.status}`);
+
+    // Build response based on current job state
+    const response = buildJobResponsePayload(job);
+
+    // Add debugging info for Vercel
+    if (process.env.VERCEL) {
+        response.debug = {
+            status: job.status,
+            createdAt: job.createdAt,
+            lastUpdate: job.lastUpdate,
+            hasProcessedPath: !!job.processedPath,
+            hasGeminiPath: !!job.geminiPath,
+            error: job.error
+        };
+    }
+
+    return res.json(response);
 });
 
 // Download Gemini-only processed image
@@ -444,21 +500,29 @@ function generateJobId() {
 
 async function processImageWithNanoBanana(imageData) {
     const jobStartTime = Date.now();
-    
-    // Create a timeout promise that will reject after 28 seconds (within Vercel's 30s limit)
+
+    // For Vercel, use shorter timeout to ensure response within 30s limit
+    const timeoutMs = process.env.VERCEL ? 20000 : 28000;
+
+    // Create a timeout promise
     const timeoutPromise = new Promise((_, reject) => {
         setTimeout(() => {
-            reject(new Error(`Job ${imageData.jobId} timed out after 28 seconds (Vercel function limit)`));
-        }, 28000);
+            reject(new Error(`Job ${imageData.jobId} timed out after ${timeoutMs/1000} seconds`));
+        }, timeoutMs);
     });
-    
+
     // Create the main processing promise
     const processingPromise = (async () => {
         try {
             console.log(`[${imageData.jobId}] Starting processing: ${imageData.originalName} with prompt: "${imageData.prompt}"`);
             imageData.status = 'gemini_processing';
             imageData.startTime = jobStartTime;
-            
+
+            // Update job status in memory
+            if (processingJobs.has(imageData.jobId)) {
+                processingJobs.set(imageData.jobId, {...imageData});
+            }
+
             // Read the image file and convert to base64
             const imageBuffer = fs.readFileSync(imageData.originalPath);
             const imageBase64 = imageBuffer.toString('base64');
@@ -494,17 +558,19 @@ async function processImageWithNanoBanana(imageData) {
                 ]
             };
             // Add timeout and better error handling
-            console.log(`[${imageData.jobId}] Calling Gemini API with timeout 25s...`);
+            const apiTimeout = process.env.VERCEL ? 15000 : 25000; // Shorter timeout on Vercel
+            console.log(`[${imageData.jobId}] Calling Gemini API with timeout ${apiTimeout/1000}s...`);
             console.log(`[${imageData.jobId}] Image size: ${Math.round(imageBuffer.length / 1024)}KB`);
             console.log(`[${imageData.jobId}] API URL: ${url}`);
-            
+            console.log(`[${imageData.jobId}] Platform: ${process.env.VERCEL ? 'Vercel' : 'Local'}`);
+
             const startTime = Date.now();
             const { data } = await axios.post(url, body, {
                 headers: {
                     'Content-Type': 'application/json',
                     'x-goog-api-key': GEMINI_API_KEY
                 },
-                timeout: 25000, // 25 second timeout (within Vercel limits)
+                timeout: apiTimeout,
                 maxContentLength: 50 * 1024 * 1024, // 50MB max response
                 maxBodyLength: 50 * 1024 * 1024
             }).catch(error => {
@@ -518,7 +584,7 @@ async function processImageWithNanoBanana(imageData) {
                 });
                 
                 if (error.code === 'ECONNABORTED') {
-                    throw new Error('Gemini API request timed out after 25 seconds (Vercel function limit)');
+                    throw new Error(`Gemini API request timed out after ${apiTimeout/1000} seconds`);
                 } else if (error.response?.status === 401) {
                     throw new Error('Invalid API key - please check GEMINI_API_KEY in Vercel dashboard');
                 } else if (error.response?.status === 403) {
@@ -526,6 +592,8 @@ async function processImageWithNanoBanana(imageData) {
                 } else if (error.response?.status === 400) {
                     const detail = error.response?.data?.error?.message || 'Invalid request';
                     throw new Error(`Gemini API error: ${detail}`);
+                } else if (error.response?.status === 429) {
+                    throw new Error('Gemini API rate limit exceeded - please wait and retry');
                 }
                 throw error;
             });
@@ -573,6 +641,11 @@ async function processImageWithNanoBanana(imageData) {
             imageData.status = 'gemini_complete';
             imageData.geminiPath = geminiPath;
             imageData.geminiDownloadPath = geminiPath;
+
+            // Update job in memory
+            if (processingJobs.has(imageData.jobId)) {
+                processingJobs.set(imageData.jobId, {...imageData});
+            }
             
             // Process with Picsart pipeline: Background Removal → Upscaling (background optional per job)
             let finalProcessedPath = geminiPath;
@@ -583,6 +656,11 @@ async function processImageWithNanoBanana(imageData) {
             try {
                 if (imageData.removeBg && PICSART_API_KEY) {
                     imageData.status = 'removing_background';
+                    // Update job in memory
+                    if (processingJobs.has(imageData.jobId)) {
+                        processingJobs.set(imageData.jobId, {...imageData});
+                    }
+
                     bgRemovedPath = await processPicsartBackgroundRemoval(geminiPath);
                     finalProcessedPath = bgRemovedPath;
                     console.log('Background removal successful');
@@ -603,14 +681,19 @@ async function processImageWithNanoBanana(imageData) {
             try {
                 if (PICSART_API_KEY) {
                     imageData.status = 'upscaling_image';
+                    // Update job in memory
+                    if (processingJobs.has(imageData.jobId)) {
+                        processingJobs.set(imageData.jobId, {...imageData});
+                    }
+
                     const upscaledPath = await processPicsartUpscaling(finalProcessedPath, 2);
-                
+
                     // Clean up intermediate files only if upscaling succeeded
                     if (bgRemovedPath && bgRemovedPath !== geminiPath && fs.existsSync(bgRemovedPath)) {
                         fs.unlinkSync(bgRemovedPath);
                     }
                     // Keep the Gemini PNG for AI-only downloads
-                    
+
                     finalProcessedPath = upscaledPath;
                     console.log('Upscaling successful');
                 } else {
@@ -997,27 +1080,7 @@ async function streamImageFile({ filePath, requestedFormat, res, inline, downloa
     }
 }
 
-// TODO: Implement actual nano banana API integration
-async function callNanoBananaAPI(imagePath, prompt) {
-    // This is where you'll integrate with Google's nano banana API
-    // Example structure:
-    /*
-    const formData = new FormData();
-    formData.append('image', fs.createReadStream(imagePath));
-    formData.append('prompt', prompt);
-    
-    const response = await axios.post('https://api.nanobanana.com/process', formData, {
-        headers: {
-            'Authorization': `Bearer ${process.env.NANO_BANANA_API_KEY}`,
-            ...formData.getHeaders()
-        }
-    });
-    
-    return response.data;
-    */
-    
-    throw new Error('Nano banana API integration not yet implemented');
-}
+// Removed: callNanoBananaAPI function - not needed as we're using Gemini API directly
 
 // -------------------------
 // SPA Fallback (register last)
