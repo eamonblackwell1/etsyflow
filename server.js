@@ -268,18 +268,8 @@ app.get('/api/health', (req, res) => {
 // In-memory job storage (works with Vercel's serverless architecture)
 const processingJobs = new Map();
 
-// Process single image (async mode for Vercel)
-app.post('/api/process-image', (req, res) => {
-    // Log request meta to help diagnose client issues
-    try {
-        console.log('Incoming /api/process-image', {
-            contentType: req.headers['content-type'],
-            contentLength: req.headers['content-length'],
-            isVercel: !!process.env.VERCEL
-        });
-    } catch (e) {}
-
-    // Wrap multer so we can return friendly errors
+// Upload image and create job (returns immediately)
+app.post('/api/upload-image', (req, res) => {
     upload.single('image')(req, res, async (err) => {
         if (err) {
             console.error('Multer upload error:', err);
@@ -308,7 +298,7 @@ app.post('/api/process-image', (req, res) => {
                 originalName: req.file.originalname,
                 prompt,
                 removeBg,
-                status: 'queued',
+                status: 'uploaded',
                 createdAt: new Date(),
                 lastUpdate: new Date()
             };
@@ -324,38 +314,11 @@ app.post('/api/process-image', (req, res) => {
                 }
             }
 
-            // Start async processing
-            processImageWithNanoBanana(imageData)
-                .then(result => {
-                    imageData.processedPath = result?.processedPath || imageData.processedPath;
-                    imageData.geminiPath = result?.geminiPath;
-                    imageData.geminiDownloadPath = result?.geminiDownloadPath;
-                    imageData.completedAt = new Date();
-                    imageData.lastUpdate = new Date();
-
-                    // Update status based on result
-                    if (!imageData.status || imageData.status === 'processing') {
-                        imageData.status = 'complete';
-                    }
-
-                    processingJobs.set(jobId, imageData);
-                })
-                .catch(processingError => {
-                    console.error(`[${jobId}] Processing error:`, processingError);
-                    imageData.status = 'error';
-                    imageData.error = processingError.message;
-                    imageData.completedAt = new Date();
-                    imageData.lastUpdate = new Date();
-                    processingJobs.set(jobId, imageData);
-                });
-
-            // Return job ID immediately
-            console.log(`[${jobId}] Job created, returning to client for polling`);
+            console.log(`[${jobId}] Image uploaded successfully`);
             return res.json({
                 jobId,
-                status: 'queued',
-                message: 'Processing started',
-                pollUrl: `/api/job/${jobId}`
+                status: 'uploaded',
+                message: 'Image uploaded, ready for processing'
             });
 
         } catch (error) {
@@ -363,6 +326,60 @@ app.post('/api/process-image', (req, res) => {
             return res.status(500).json({ error: 'Upload failed: ' + (error && error.message ? error.message : String(error)) });
         }
     });
+});
+
+// Start processing (keeps serverless function alive during processing)
+app.post('/api/start-processing/:jobId', async (req, res) => {
+    const { jobId } = req.params;
+    const imageData = processingJobs.get(jobId);
+
+    if (!imageData) {
+        return res.status(404).json({ error: 'Job not found' });
+    }
+
+    if (imageData.status !== 'uploaded') {
+        return res.status(400).json({ error: `Job already ${imageData.status}` });
+    }
+
+    try {
+        console.log(`[${jobId}] Starting processing (serverless function stays alive)`);
+        imageData.status = 'processing';
+        processingJobs.set(jobId, imageData);
+
+        // Process synchronously so serverless function stays alive
+        const result = await processImageWithNanoBanana(imageData);
+
+        imageData.processedPath = result?.processedPath || imageData.processedPath;
+        imageData.geminiPath = result?.geminiPath;
+        imageData.geminiDownloadPath = result?.geminiDownloadPath;
+        imageData.completedAt = new Date();
+        imageData.lastUpdate = new Date();
+
+        // Update status based on result
+        if (!imageData.status || imageData.status === 'processing') {
+            imageData.status = 'complete';
+        }
+
+        processingJobs.set(jobId, imageData);
+
+        // Return full result
+        const responsePayload = buildJobResponsePayload(imageData);
+        return res.json(responsePayload);
+
+    } catch (processingError) {
+        console.error(`[${jobId}] Processing error:`, processingError);
+        imageData.status = 'error';
+        imageData.error = processingError.message;
+        imageData.completedAt = new Date();
+        imageData.lastUpdate = new Date();
+        processingJobs.set(jobId, imageData);
+
+        return res.status(500).json({
+            error: processingError.message || 'Processing failed',
+            jobId,
+            status: 'error'
+        });
+    }
 });
 
 // Check job status (re-enabled for async processing)

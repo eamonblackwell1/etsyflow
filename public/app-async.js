@@ -277,39 +277,50 @@ class ImageProcessor {
 
     async processImage(imageData) {
         try {
+            // Step 1: Upload the image
             const formData = new FormData();
             formData.append('image', imageData.file);
             formData.append('prompt', imageData.prompt);
             formData.append('removeBg', this.removeBg ? 'true' : 'false');
 
-            const response = await fetch('/api/process-image', {
+            console.log('Step 1: Uploading image...');
+            const uploadResponse = await fetch('/api/upload-image', {
                 method: 'POST',
                 body: formData
             });
 
-            if (!response.ok) {
-                const errorBody = await response.json().catch(() => ({}));
-                const message = errorBody?.error || `HTTP error! status: ${response.status}`;
+            if (!uploadResponse.ok) {
+                const errorBody = await uploadResponse.json().catch(() => ({}));
+                const message = errorBody?.error || `Upload failed! status: ${uploadResponse.status}`;
                 throw new Error(message);
             }
 
-            const result = await response.json();
+            const uploadResult = await uploadResponse.json();
+            imageData.jobId = uploadResult.jobId;
+            console.log(`Step 1 complete: Job ${imageData.jobId} created`);
 
-            // Check if we got a job ID (async processing) or direct result (sync processing)
-            if (result.jobId) {
-                // Async processing - start polling
-                console.log(`Job ${result.jobId} created, starting polling...`);
-                imageData.jobId = result.jobId;
-                imageData.status = 'processing';
-                this.updateImageCard(imageData);
-                this.logStatus(imageData, 'Processing started...');
+            // Step 2: Start processing (this keeps serverless function alive)
+            console.log('Step 2: Starting processing (function stays alive)...');
+            imageData.status = 'processing';
+            this.updateImageCard(imageData);
+            this.logStatus(imageData, 'Processing with AI...');
 
-                // Start polling for job status
-                await this.pollJobStatus(imageData);
-            } else {
-                // Sync processing (fallback for older version)
-                this.applyProcessingResult(imageData, result);
+            const processResponse = await fetch(`/api/start-processing/${imageData.jobId}`, {
+                method: 'POST'
+            });
+
+            if (!processResponse.ok) {
+                const errorBody = await processResponse.json().catch(() => ({}));
+                const message = errorBody?.error || `Processing failed! status: ${processResponse.status}`;
+                throw new Error(message);
             }
+
+            const processResult = await processResponse.json();
+            console.log(`Step 2 complete: Job ${imageData.jobId} finished with status ${processResult.status}`);
+
+            // Apply the final result
+            this.applyProcessingResult(imageData, processResult);
+
         } catch (error) {
             console.error('Process image error:', error);
             throw error;
