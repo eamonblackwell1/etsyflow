@@ -385,6 +385,7 @@ class ImageProcessor {
         imageData.geminiUrl = result.geminiPreviewUrl || null;
         imageData.downloadTokens = result.downloadTokens || {};
         imageData.downloadFilenames = result.downloadFilenames || {};
+        imageData.imageData = result.imageData || null; // Base64 image data for Vercel
         imageData.error = result.error || null;
 
         if (imageData.processedUrl) {
