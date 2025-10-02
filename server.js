@@ -8,6 +8,7 @@ const path = require('path');
 const sharp = require('sharp');
 const os = require('os');
 const crypto = require('crypto');
+// Trigger deployment
 // Load environment variables
 // Note: On Vercel, env vars come from dashboard, not .env file
 if (process.env.NODE_ENV !== 'production' && !process.env.VERCEL) {
