@@ -387,6 +387,7 @@ class ImageProcessor {
         }
 
         this.logStatus(imageData, this.getStatusText(imageData.status, { progress: result.progress }));
+        this.updateImageCard(imageData);
     }
 
     logStatus(imageData, message) {
