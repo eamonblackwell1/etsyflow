@@ -502,12 +502,28 @@ app.get('/api/download-by-token', async (req, res) => {
         const inline = ['1', 'true', 'yes'].includes((req.query.inline || '').toString().toLowerCase());
         const fallbackName = req.query.filename || path.basename(resolvedPath);
 
+        // Find the job that has this file path and retrieve the buffer
+        let sourceBuffer = null;
+        for (const [jobId, job] of processingJobs) {
+            // Check if this is the final processed image
+            if (job.processedPath === resolvedPath && job.processedBuffer) {
+                sourceBuffer = job.processedBuffer;
+                break;
+            }
+            // Check if this is the Gemini-only image
+            if (job.geminiDownloadPath === resolvedPath && job.geminiBuffer) {
+                sourceBuffer = job.geminiBuffer;
+                break;
+            }
+        }
+
         await streamImageFile({
             filePath: resolvedPath,
             requestedFormat,
             res,
             inline,
-            downloadName: fallbackName
+            downloadName: fallbackName,
+            sourceBuffer
         });
     } catch (error) {
         console.error('Download-by-token error:', error);
@@ -729,11 +745,13 @@ async function processImageWithNanoBanana(imageData) {
             
             fs.writeFileSync(geminiPath, pngBuffer);
             console.log(`Gemini image generated and saved: ${geminiPath}`);
-            
+
             // Update status: Gemini complete, starting Picsart processing
             imageData.status = 'gemini_complete';
             imageData.geminiPath = geminiPath;
             imageData.geminiDownloadPath = geminiPath;
+            // Store buffer in memory for Vercel serverless compatibility
+            imageData.geminiBuffer = pngBuffer;
 
             // Update job in memory
             if (processingJobs.has(imageData.jobId)) {
@@ -811,7 +829,12 @@ async function processImageWithNanoBanana(imageData) {
                 imageData.status = 'picsart_failed_fallback';
                 imageData.pipelineErrors = pipelineErrors;
             }
-            
+
+            // Store final processed image buffer for Vercel compatibility
+            if (fs.existsSync(finalProcessedPath)) {
+                imageData.processedBuffer = fs.readFileSync(finalProcessedPath);
+            }
+
             return { processedPath: finalProcessedPath };
             
         } else {
@@ -1129,21 +1152,26 @@ function decodeDownloadToken(token) {
     return resolvedPath;
 }
 
-async function streamImageFile({ filePath, requestedFormat, res, inline, downloadName }) {
-    if (!fs.existsSync(filePath)) {
-        res.status(404).json({ error: 'File not found on disk' });
-        return;
+async function streamImageFile({ filePath, requestedFormat, res, inline, downloadName, sourceBuffer }) {
+    // Use provided buffer or read from file
+    let imageBuffer = sourceBuffer;
+
+    if (!imageBuffer) {
+        if (!fs.existsSync(filePath)) {
+            res.status(404).json({ error: 'File not found on disk' });
+            return;
+        }
+        imageBuffer = fs.readFileSync(filePath);
     }
 
     try {
-        const sourceBuffer = fs.readFileSync(filePath);
         const actualExt = path.extname(filePath) || '.png';
         let mimeType = getMimeType(filePath);
-        let outputBuffer = sourceBuffer;
+        let outputBuffer = imageBuffer;
         let filename = downloadName || path.basename(filePath);
 
         if (requestedFormat) {
-            let transformer = sharp(sourceBuffer);
+            let transformer = sharp(imageBuffer);
             if (requestedFormat === 'png') {
                 transformer = transformer.png({ compressionLevel: 9 });
                 mimeType = 'image/png';
