@@ -109,7 +109,16 @@ app.use(express.json());
 
 // Serve static site from an absolute path (works in Vercel Node runtime)
 const STATIC_DIR = path.resolve(__dirname, 'public');
-app.use(express.static(STATIC_DIR));
+app.use(express.static(STATIC_DIR, {
+    setHeaders: (res, path) => {
+        // Prevent caching of JS and CSS files in production
+        if (path.endsWith('.js') || path.endsWith('.css')) {
+            res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+            res.setHeader('Pragma', 'no-cache');
+            res.setHeader('Expires', '0');
+        }
+    }
+}));
 
 // NOTE: SPA fallback must be registered AFTER API routes so it doesn't
 // intercept GET requests like /api/job/:id. We'll add it near the end.
