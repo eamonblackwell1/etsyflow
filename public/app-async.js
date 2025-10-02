@@ -202,18 +202,18 @@ class ImageProcessor {
         const downloadFinalBtn = document.getElementById(`download_final_${imageData.id}`);
 
         if (downloadGeminiBtn) {
-            const hasGeminiToken = !!(imageData.downloadTokens && imageData.downloadTokens.gemini);
-            downloadGeminiBtn.disabled = !hasGeminiToken;
+            const hasGemini = !!(imageData.imageData && imageData.imageData.gemini) || !!(imageData.downloadTokens && imageData.downloadTokens.gemini);
+            downloadGeminiBtn.disabled = !hasGemini;
         }
 
         if (downloadFinalBtn) {
-            const hasFinalToken = !!(imageData.downloadTokens && imageData.downloadTokens.final);
-            downloadFinalBtn.disabled = !hasFinalToken;
+            const hasFinal = !!(imageData.imageData && imageData.imageData.final) || !!(imageData.downloadTokens && imageData.downloadTokens.final);
+            downloadFinalBtn.disabled = !hasFinal;
         }
 
         if (downloadBtn) {
-            const hasFinalToken = !!(imageData.downloadTokens && imageData.downloadTokens.final);
-            downloadBtn.disabled = !hasFinalToken;
+            const hasFinal = !!(imageData.imageData && imageData.imageData.final) || !!(imageData.downloadTokens && imageData.downloadTokens.final);
+            downloadBtn.disabled = !hasFinal;
         }
     }
 
@@ -421,14 +421,28 @@ class ImageProcessor {
 
     downloadImage(imageId) {
         const imageData = this.images.find(img => img.id === imageId);
-        if (!imageData || !imageData.downloadTokens || !imageData.downloadTokens.final) return;
+        if (!imageData) return;
 
         const link = document.createElement('a');
         const formatSelect = document.getElementById(`format_${imageId}`);
         const requestedFormat = formatSelect ? (formatSelect.value || 'jpg') : 'jpg';
-        const filename = (imageData.downloadFilenames && imageData.downloadFilenames.final) || `enhanced_${(imageData.name || 'image').replace(/\.[^/.]+$/, '')}.${requestedFormat}`;
 
-        link.href = `/api/download-by-token?token=${encodeURIComponent(imageData.downloadTokens.final)}&format=${encodeURIComponent(requestedFormat)}&filename=${encodeURIComponent(filename)}`;
+        // Check for base64 image data first (Vercel mode)
+        if (imageData.imageData && imageData.imageData.final) {
+            const base64Data = imageData.imageData.final.base64;
+            const mimeType = requestedFormat === 'png' ? 'image/png' : 'image/jpeg';
+            const filename = imageData.imageData.final.filename.replace('.png', `.${requestedFormat}`);
+
+            link.href = `data:${mimeType};base64,${base64Data}`;
+            link.download = filename;
+        } else if (imageData.downloadTokens && imageData.downloadTokens.final) {
+            // Fall back to token-based download (local mode)
+            const filename = (imageData.downloadFilenames && imageData.downloadFilenames.final) || `enhanced_${(imageData.name || 'image').replace(/\.[^/.]+$/, '')}.${requestedFormat}`;
+            link.href = `/api/download-by-token?token=${encodeURIComponent(imageData.downloadTokens.final)}&format=${encodeURIComponent(requestedFormat)}&filename=${encodeURIComponent(filename)}`;
+        } else {
+            return; // No download available
+        }
+
         document.body.appendChild(link);
         link.click();
         document.body.removeChild(link);
@@ -436,14 +450,28 @@ class ImageProcessor {
 
     downloadGeminiImage(imageId) {
         const imageData = this.images.find(img => img.id === imageId);
-        if (!imageData || !imageData.downloadTokens || !imageData.downloadTokens.gemini) return;
+        if (!imageData) return;
 
         const link = document.createElement('a');
         const formatSelect = document.getElementById(`format_${imageId}`);
         const requestedFormat = formatSelect ? (formatSelect.value || 'jpg') : 'jpg';
-        const filename = (imageData.downloadFilenames && imageData.downloadFilenames.gemini) || `ai_only_${(imageData.name || 'image').replace(/\.[^/.]+$/, '')}.${requestedFormat}`;
 
-        link.href = `/api/download-by-token?token=${encodeURIComponent(imageData.downloadTokens.gemini)}&format=${encodeURIComponent(requestedFormat)}&filename=${encodeURIComponent(filename)}`;
+        // Check for base64 image data first (Vercel mode)
+        if (imageData.imageData && imageData.imageData.gemini) {
+            const base64Data = imageData.imageData.gemini.base64;
+            const mimeType = requestedFormat === 'png' ? 'image/png' : 'image/jpeg';
+            const filename = imageData.imageData.gemini.filename.replace('.png', `.${requestedFormat}`);
+
+            link.href = `data:${mimeType};base64,${base64Data}`;
+            link.download = filename;
+        } else if (imageData.downloadTokens && imageData.downloadTokens.gemini) {
+            // Fall back to token-based download (local mode)
+            const filename = (imageData.downloadFilenames && imageData.downloadFilenames.gemini) || `ai_only_${(imageData.name || 'image').replace(/\.[^/.]+$/, '')}.${requestedFormat}`;
+            link.href = `/api/download-by-token?token=${encodeURIComponent(imageData.downloadTokens.gemini)}&format=${encodeURIComponent(requestedFormat)}&filename=${encodeURIComponent(filename)}`;
+        } else {
+            return; // No download available
+        }
+
         document.body.appendChild(link);
         link.click();
         document.body.removeChild(link);

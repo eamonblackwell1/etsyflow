@@ -1060,32 +1060,57 @@ function buildJobResponsePayload(job) {
         }
     };
 
-    if (job.processedPath && fs.existsSync(job.processedPath)) {
-        const finalToken = createDownloadToken(job.processedPath);
-        response.previewUrl = buildPreviewUrl(job.processedPath);
-        response.downloadTokens = {
-            ...response.downloadTokens,
-            final: finalToken
-        };
-        const finalExt = path.extname(job.processedPath) || '.png';
-        response.downloadFilenames = {
-            ...response.downloadFilenames,
-            final: `enhanced_${baseName}${ensureDotExtension(finalExt)}`
-        };
-    }
+    // On Vercel, include base64 image data directly in response
+    // since file system persistence doesn't work across serverless invocations
+    if (process.env.VERCEL) {
+        if (job.processedBuffer) {
+            response.imageData = {
+                final: {
+                    base64: job.processedBuffer.toString('base64'),
+                    mimeType: 'image/png',
+                    filename: `enhanced_${baseName}.png`
+                }
+            };
+        }
+        if (job.geminiBuffer) {
+            response.imageData = {
+                ...response.imageData,
+                gemini: {
+                    base64: job.geminiBuffer.toString('base64'),
+                    mimeType: 'image/png',
+                    filename: `ai_only_${baseName}.png`
+                }
+            };
+        }
+    } else {
+        // Local environment: use file-based downloads
+        if (job.processedPath && fs.existsSync(job.processedPath)) {
+            const finalToken = createDownloadToken(job.processedPath);
+            response.previewUrl = buildPreviewUrl(job.processedPath);
+            response.downloadTokens = {
+                ...response.downloadTokens,
+                final: finalToken
+            };
+            const finalExt = path.extname(job.processedPath) || '.png';
+            response.downloadFilenames = {
+                ...response.downloadFilenames,
+                final: `enhanced_${baseName}${ensureDotExtension(finalExt)}`
+            };
+        }
 
-    if (job.geminiDownloadPath && fs.existsSync(job.geminiDownloadPath)) {
-        const geminiToken = createDownloadToken(job.geminiDownloadPath);
-        response.geminiPreviewUrl = buildPreviewUrl(job.geminiDownloadPath);
-        response.downloadTokens = {
-            ...response.downloadTokens,
-            gemini: geminiToken
-        };
-        const geminiExt = path.extname(job.geminiDownloadPath) || '.png';
-        response.downloadFilenames = {
-            ...response.downloadFilenames,
-            gemini: `ai_only_${baseName}${ensureDotExtension(geminiExt)}`
-        };
+        if (job.geminiDownloadPath && fs.existsSync(job.geminiDownloadPath)) {
+            const geminiToken = createDownloadToken(job.geminiDownloadPath);
+            response.geminiPreviewUrl = buildPreviewUrl(job.geminiDownloadPath);
+            response.downloadTokens = {
+                ...response.downloadTokens,
+                gemini: geminiToken
+            };
+            const geminiExt = path.extname(job.geminiDownloadPath) || '.png';
+            response.downloadFilenames = {
+                ...response.downloadFilenames,
+                gemini: `ai_only_${baseName}${ensureDotExtension(geminiExt)}`
+            };
+        }
     }
 
     if (job.error) {
