@@ -328,6 +328,72 @@ app.post('/api/upload-image', (req, res) => {
     });
 });
 
+// Legacy endpoint for backwards compatibility (old clients still using script.js)
+app.post('/api/process-image', (req, res) => {
+    upload.single('image')(req, res, async (err) => {
+        if (err) {
+            console.error('Multer upload error:', err);
+            if (err.code === 'LIMIT_FILE_SIZE') {
+                return res.status(413).json({ error: 'File too large (max 10MB)' });
+            }
+            return res.status(400).json({ error: err.message || 'Upload failed' });
+        }
+
+        try {
+            if (!req.file) {
+                return res.status(400).json({ error: 'No image file provided (field name must be "image")' });
+            }
+
+            const { prompt: incomingPrompt } = req.body;
+            const removeBgRaw = (req.body.removeBg || '').toString().toLowerCase();
+            const removeBg = removeBgRaw === 'true' || (removeBgRaw === '' && ENABLE_BG_REMOVAL);
+            const prompt = (incomingPrompt && incomingPrompt.trim().length > 0)
+                ? incomingPrompt.trim()
+                : STATIC_PROMPT;
+
+            const jobId = generateJobId();
+            const imageData = {
+                jobId,
+                originalPath: req.file.path,
+                originalName: req.file.originalname,
+                prompt,
+                removeBg,
+                status: 'processing',
+                createdAt: new Date(),
+                lastUpdate: new Date()
+            };
+
+            // Store job in memory
+            processingJobs.set(jobId, imageData);
+
+            console.log(`[${jobId}] Legacy endpoint: Processing synchronously`);
+
+            // Process synchronously (this keeps function alive)
+            const result = await processImageWithNanoBanana(imageData);
+
+            imageData.processedPath = result?.processedPath || imageData.processedPath;
+            imageData.geminiPath = result?.geminiPath;
+            imageData.geminiDownloadPath = result?.geminiDownloadPath;
+            imageData.completedAt = new Date();
+            imageData.lastUpdate = new Date();
+
+            if (!imageData.status || imageData.status === 'processing') {
+                imageData.status = 'complete';
+            }
+
+            processingJobs.set(jobId, imageData);
+
+            // Return full result
+            const responsePayload = buildJobResponsePayload(imageData);
+            return res.json(responsePayload);
+
+        } catch (processingError) {
+            console.error('Processing error:', processingError);
+            return res.status(500).json({ error: processingError.message || 'Processing failed' });
+        }
+    });
+});
+
 // Start processing (keeps serverless function alive during processing)
 app.post('/api/start-processing/:jobId', async (req, res) => {
     const { jobId } = req.params;
