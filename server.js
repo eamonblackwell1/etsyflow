@@ -628,8 +628,8 @@ function generateJobId() {
 async function processImageWithNanoBanana(imageData) {
     const jobStartTime = Date.now();
 
-    // For Vercel, use shorter timeout to ensure response within 30s limit
-    const timeoutMs = process.env.VERCEL ? 20000 : 28000;
+    // For Vercel, use 28s timeout (just under 30s limit) to give Gemini more time
+    const timeoutMs = process.env.VERCEL ? 28000 : 28000;
 
     // Create a timeout promise
     const timeoutPromise = new Promise((_, reject) => {
@@ -688,7 +688,7 @@ async function processImageWithNanoBanana(imageData) {
                 ]
             };
             // Add timeout and better error handling
-            const apiTimeout = process.env.VERCEL ? 15000 : 25000; // Shorter timeout on Vercel
+            const apiTimeout = process.env.VERCEL ? 25000 : 25000; // 25s timeout for Gemini API
             console.log(`[${imageData.jobId}] Calling Gemini API with timeout ${apiTimeout/1000}s...`);
             console.log(`[${imageData.jobId}] Image size: ${Math.round(imageBuffer.length / 1024)}KB`);
             console.log(`[${imageData.jobId}] API URL: ${url}`);
