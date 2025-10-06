@@ -55,39 +55,57 @@ Internal analysis checklist
 - Mood and era cues
 
 Creative mandate
-Produce a design that feels like a close cousin to the reference, not a sibling. Target a novelty range of about 25 to 35 percent. Keep the same subject category, same broad style family, and same general compositional balance, but change specific details so the result is clearly new.
+Target a novelty range of 32–38 percent. Keep the same subject category, same broad style family, and the same general composition family, but change specific details so the result is clearly new.
+
+Text replication (mandatory)
+- If the reference contains any text, you must include the exact same text string in the output.
+- Preserve wording, spelling, casing, punctuation, numerals, emojis, and line breaks exactly.
+- Do not translate, paraphrase, abbreviate, or add new text.
+- Keep the text region's position and scale within ±5 percent of the reference. You may make minor kerning or tracking adjustments only to maintain legibility on white.
+- Preserve the text's color and basic typographic weight. If legibility on white is poor, add a subtle outline or adjust only value while keeping the same hue family.
+- Do not stylize the text beyond legibility aids. All required variation must be applied to the artwork, not the text.
 
 Required variation
-Make at least 3 meaningful changes across different axes:
-1. Subject pose or angle (stance, head turn, limb position, camera angle)
-2. Feature treatment (line weight, texture pattern, edge quality, detailing density)
-3. Secondary elements (swap or reposition props, foliage, clouds, stars, background motifs)
-4. Composition spacing (scale, spacing, overlap, framing)
-5. Color rewrite (fresh palette with at least two new hues or shifted temperature/value structure)
-6. Stylization tweak (inkier lines, softer grain, halftone, etc.)
+Make at least 4 meaningful changes across different axes, applied to the image content only:
+1. Subject pose or angle: change camera or subject orientation by at least 20 degrees, or alter limb or head position with a clearly different gesture.
+2. Feature treatment: change line weight or edge quality by at least one step (fine to medium, crisp to slightly textured). Adjust texture density by ±20 percent or more.
+3. Secondary elements: add, remove, or swap at least 2 items and reposition them so that no element sits within 10 percent of the same canvas coordinates as in the reference.
+4. Composition spacing: change scale of the main subject by 12–22 percent, or shift framing so that 2 or more silhouette extremities move by 8–15 percent of canvas size.
+5. Color rewrite for imagery: introduce at least 2 new hues and shift the base imagery hue by ≥30 degrees on the color wheel, or invert the imagery's dominant temperature. Rebuild imagery value grouping so dark to light does not match the reference.
+6. Stylization tweak: apply one visible modifier to the imagery at 100 percent zoom, such as inkier lines, softer grain, light halftone, or gentle stipple.
+
+Similarity guardrails
+- Do not reuse the exact pose or camera angle within ±10 degrees.
+- Do not match the reference primary or secondary imagery hue within ±15 degrees. Text color is exempt per Text replication.
+- Do not replicate the same count and arrangement of secondary elements.
+- Ensure the silhouette differs at 2 or more major contour features.
 
 Hard constraints
-- Do not trace or replicate shapes, contours, or textures one-to-one
-- Do not reproduce the exact pose, element count/arrangement, or color codes
-- No text, logos, signatures, or watermarks
-- No brand identifiers or copyrighted marks
+- Do not trace or replicate shapes, contours, or textures one to one.
+- Do not reproduce the exact pose, element count or arrangement, or color codes for the imagery.
+- Text must be preserved exactly when present in the reference.
+- No signatures or watermarks.
+- No brand identifiers or copyrighted marks. If the reference text is clearly a brand name or protected mark, substitute a neutral placeholder of equal length and similar typographic weight while preserving layout.
 
 Target look
-- Same subject type as the reference (bear -> bear, pizza -> pizza)
-- Same composition family, but with altered spacing/feature emphasis for freshness
-- Harmonious, printable palette with clean value separation
+- Same subject type as the reference (bear -> bear, pizza -> pizza).
+- Same composition family, with altered spacing or feature emphasis for freshness.
+- Harmonious, printable palette with clean value separation and large, readable shapes.
 
 Output specs
-- Single, isolated design centered on a pure white background
-- Clear silhouette with large, readable shapes for apparel printing
-- No text, no logos, no watermarks
-- High-resolution raster suitable for print
+- Single, isolated design centered on a pure white background.
+- Clear silhouette suitable for apparel printing.
+- Include preserved text when present in the reference; otherwise no text.
+- High resolution raster suitable for print.
 
 Quality control self-check
-Before finalizing, compare mentally against the reference: if pose, silhouette, arrangement, and palette feel near-identical, regenerate with larger adjustments.
+Before finalizing, compare against the reference at 100 percent zoom:
+- Confirm that all reference text appears, with identical characters and line breaks, and is legible on white. If any character is missing or altered, regenerate.
+- If pose or camera angle is within ±10 degrees, or imagery primary hue is within ±15 degrees, or secondary element layout feels near-identical, regenerate with larger adjustments to the imagery.
+- When adjustments are needed, increase the composition spacing delta first, then the pose delta, then the color delta for imagery.
 
 Deliver
-Generate 1 version that meets the above rules.`;
+Generate 1 version that meets all rules.`;
 
 // Feature flags
 const ENABLE_BG_REMOVAL = (process.env.ENABLE_BG_REMOVAL || 'true').toLowerCase() !== 'false';
@@ -642,11 +660,14 @@ async function processImageWithNanoBanana(imageData) {
             // Build a stricter prompt wrapper to improve adherence to constraints
             const instructionPreamble = [
                 'You are an expert apparel graphic designer. Follow ALL constraints strictly:',
-                '- Use the uploaded image ONLY as inspiration for motif, silhouette, and palette.',
+                '- CRITICAL: First check if the reference image contains any text. If it does, that EXACT text MUST appear in your output.',
+                '- Preserve any text from the reference image EXACTLY as shown - same wording, spelling, casing, and approximate placement.',
+                '- Use the uploaded image as inspiration for motif, silhouette, and palette.',
                 '- OUTPUT: a single isolated design suitable for printing on apparel.',
                 '- TRANSPARENT background, no mockups, no garment, no model, no scene.',
-                '- NO text, letters, numbers, watermarks, brand marks, or logos.',
+                '- Do NOT add any NEW text, watermarks, brand marks, or logos that were not in the original.',
                 '- Clean contours, large readable shapes; keep style simple and legible.',
+                '- Text from the reference MUST be included if present. Only avoid adding additional text.',
                 '',
                 'If the user asks for a mockup or scene, IGNORE that and produce only the isolated design.'
             ].join('\n');

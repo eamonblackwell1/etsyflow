@@ -12,39 +12,56 @@ Internal analysis checklist
 - Mood and era cues
 
 Creative mandate
-Produce a design that feels like a close cousin to the reference, not a sibling. Target a novelty range of about 25 to 35 percent. Keep the same subject category, same broad style family, and same general compositional balance, but change specific details so the result is clearly new.
+Target a novelty range of 32–38 percent. Keep the same subject category, same broad style family, and the same general composition family, but change specific details so the result is clearly new.
+
+Text replication (mandatory)
+- If the reference contains any text, you must include the exact same text string in the output.
+- Preserve wording, spelling, casing, punctuation, numerals, emojis, and line breaks exactly.
+- Do not translate, paraphrase, abbreviate, or add new text.
+- Keep the text region's position and scale within ±5 percent of the reference. You may make minor kerning or tracking adjustments only to maintain legibility on white.
+- Preserve the text's color and basic typographic weight. If legibility on white is poor, add a subtle outline or adjust only value while keeping the same hue family.
+- Do not stylize the text beyond legibility aids. All required variation must be applied to the artwork, not the text.
 
 Required variation
-Make at least 3 meaningful changes across different axes:
-1. Subject pose or angle (stance, head turn, limb position, camera angle)
-2. Feature treatment (line weight, texture pattern, edge quality, detailing density)
-3. Secondary elements (swap or reposition props, foliage, clouds, stars, background motifs)
-4. Composition spacing (scale, spacing, overlap, framing)
-5. Color rewrite (fresh palette with at least two new hues or shifted temperature/value structure)
-6. Stylization tweak (inkier lines, softer grain, halftone, etc.)
+Make at least 4 meaningful changes across different axes, applied to the image content only:
+1. Subject pose or angle: change camera or subject orientation by at least 20 degrees, or alter limb or head position with a clearly different gesture.
+2. Feature treatment: change line weight or edge quality by at least one step (fine to medium, crisp to slightly textured). Adjust texture density by ±20 percent or more.
+3. Secondary elements: add, remove, or swap at least 2 items and reposition them so that no element sits within 10 percent of the same canvas coordinates as in the reference.
+4. Composition spacing: change scale of the main subject by 12–22 percent, or shift framing so that 2 or more silhouette extremities move by 8–15 percent of canvas size.
+5. Color rewrite for imagery: introduce at least 2 new hues and shift the base imagery hue by ≥30 degrees on the color wheel, or invert the imagery's dominant temperature. Rebuild imagery value grouping so dark to light does not match the reference.
+6. Stylization tweak: apply one visible modifier to the imagery at 100 percent zoom, such as inkier lines, softer grain, light halftone, or gentle stipple.
+
+Similarity guardrails
+- Do not reuse the exact pose or camera angle within ±10 degrees.
+- Do not match the reference primary or secondary imagery hue within ±15 degrees. Text color is exempt per Text replication.
+- Do not replicate the same count and arrangement of secondary elements.
+- Ensure the silhouette differs at 2 or more major contour features.
 
 Hard constraints
-- Do not trace or replicate shapes, contours, or textures one-to-one
-- Do not reproduce the exact pose, element count/arrangement, or color codes
-- No text, logos, signatures, or watermarks
-- No brand identifiers or copyrighted marks
+- Do not trace or replicate shapes, contours, or textures one to one.
+- Do not reproduce the exact pose, element count or arrangement, or color codes for the imagery.
+- Text must be preserved exactly when present in the reference.
+- No signatures or watermarks.
+- No brand identifiers or copyrighted marks. If the reference text is clearly a brand name or protected mark, substitute a neutral placeholder of equal length and similar typographic weight while preserving layout.
 
 Target look
-- Same subject type as the reference (bear -> bear, pizza -> pizza)
-- Same composition family, but with altered spacing/feature emphasis for freshness
-- Harmonious, printable palette with clean value separation
+- Same subject type as the reference (bear → bear, pizza → pizza).
+- Same composition family, with altered spacing or feature emphasis for freshness.
+- Harmonious, printable palette with clean value separation and large, readable shapes.
 
 Output specs
-- Single, isolated design centered on a pure white background
-- Clear silhouette with large, readable shapes for apparel printing
-- No text, no logos, no watermarks
-- High-resolution raster suitable for print
+- Single, isolated design centered on a pure white background.
+- Clear silhouette suitable for apparel printing.
+- Include preserved text when present in the reference; otherwise no text.
+- High resolution raster suitable for print.
 
 Quality control self-check
-Before finalizing, compare mentally against the reference: if pose, silhouette, arrangement, and palette feel near-identical, regenerate with larger adjustments.
+Before finalizing, compare mentally against the reference:
+- If pose or camera angle is within ±10 degrees, or primary hue is within ±15 degrees, or secondary element layout feels near-identical, regenerate with larger adjustments.
+- Prefer increasing the composition spacing delta first, then the pose delta, then the color delta.
 
 Deliver
-Generate 1 version that meets the above rules.`;
+Generate 1 version that meets all rules.`;
 
 class ImageProcessor {
     constructor() {
@@ -151,10 +168,15 @@ class ImageProcessor {
             <div class="processed-section">
                 <h4>Processed</h4>
                 <div class="image-status status-queued" id="status_${imageData.id}">Queued</div>
-                <img class="image-preview" id="processed_${imageData.id}" style="display: none;" alt="Processed">
+                <div class="preview-container" id="preview_container_${imageData.id}" style="display: none;">
+                    <img class="image-preview" id="processed_${imageData.id}" alt="Processed">
+                </div>
             </div>
 
             <div class="image-actions">
+                <button class="btn btn-secondary" onclick="imageProcessor.reprocessImage('${imageData.id}')" style="display: none;" id="reprocess_${imageData.id}">
+                    🔄 Reprocess Image
+                </button>
                 <div class="download-controls">
                     <label for="format_${imageData.id}">Format:</label>
                     <select class="format-select" id="format_${imageData.id}">
@@ -180,8 +202,10 @@ class ImageProcessor {
     updateImageCard(imageData) {
         const originalImg = document.getElementById(`original_${imageData.id}`);
         const processedImg = document.getElementById(`processed_${imageData.id}`);
+        const previewContainer = document.getElementById(`preview_container_${imageData.id}`);
         const status = document.getElementById(`status_${imageData.id}`);
         const card = document.getElementById(`card_${imageData.id}`);
+        const reprocessBtn = document.getElementById(`reprocess_${imageData.id}`);
 
         if (imageData.originalUrl && originalImg) {
             originalImg.src = imageData.originalUrl;
@@ -192,9 +216,21 @@ class ImageProcessor {
             status.className = `image-status status-${imageData.status}`;
         }
 
-        if (imageData.processedUrl && processedImg) {
+        // Show preview when processed image is available
+        if (imageData.processedUrl && processedImg && previewContainer) {
             processedImg.src = imageData.processedUrl;
-            processedImg.style.display = 'block';
+            previewContainer.style.display = 'block';
+        }
+
+        // Show reprocess button when processing is complete (any completion state)
+        const completedStates = [
+            'complete', 'pipeline_complete', 'partial_pipeline_success',
+            'picsart_failed_fallback', 'gemini_complete'
+        ];
+        if (reprocessBtn && completedStates.includes(imageData.status)) {
+            reprocessBtn.style.display = 'block';
+        } else if (reprocessBtn) {
+            reprocessBtn.style.display = 'none';
         }
 
         const downloadBtn = card.querySelector('.btn-primary');
@@ -476,6 +512,49 @@ class ImageProcessor {
         document.body.appendChild(link);
         link.click();
         document.body.removeChild(link);
+    }
+
+    async reprocessImage(imageId) {
+        const imageData = this.images.find(img => img.id === imageId);
+        if (!imageData || !imageData.file) {
+            console.error('Cannot reprocess: image data not found');
+            return;
+        }
+
+        // Reset the image status and clear previous results
+        imageData.status = 'processing';
+        imageData.processedUrl = null;
+        imageData.geminiUrl = null;
+        imageData.downloadTokens = {};
+        imageData.downloadFilenames = {};
+        imageData.imageData = null;
+        imageData.error = null;
+        imageData.pipelineErrors = [];
+
+        // Hide the reprocess button during reprocessing
+        const reprocessBtn = document.getElementById(`reprocess_${imageData.id}`);
+        if (reprocessBtn) {
+            reprocessBtn.style.display = 'none';
+        }
+
+        // Hide the preview while reprocessing
+        const previewContainer = document.getElementById(`preview_container_${imageData.id}`);
+        if (previewContainer) {
+            previewContainer.style.display = 'none';
+        }
+
+        this.updateImageCard(imageData);
+        this.logStatus(imageData, 'Reprocessing image...');
+
+        try {
+            await this.processImage(imageData);
+        } catch (error) {
+            console.error('Reprocessing failed:', error);
+            imageData.status = 'error';
+            imageData.error = error.message;
+        }
+
+        this.updateImageCard(imageData);
     }
 }
 
