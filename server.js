@@ -818,7 +818,7 @@ async function processImageWithNanoBanana(imageData) {
                         processingJobs.set(imageData.jobId, {...imageData});
                     }
 
-                    const upscaledPath = await processPicsartUpscaling(finalProcessedPath, 2);
+                    const upscaleResult = await processPicsartUpscaling(finalProcessedPath, 2);
 
                     // Clean up intermediate files only if upscaling succeeded
                     if (bgRemovedPath && bgRemovedPath !== geminiPath && fs.existsSync(bgRemovedPath)) {
@@ -826,7 +826,11 @@ async function processImageWithNanoBanana(imageData) {
                     }
                     // Keep the Gemini PNG for AI-only downloads
 
-                    finalProcessedPath = upscaledPath;
+                    finalProcessedPath = upscaleResult.path;
+                    // Store upscaled buffer immediately for Vercel
+                    if (upscaleResult.buffer) {
+                        imageData.processedBuffer = upscaleResult.buffer;
+                    }
                     console.log('Upscaling successful');
                 } else {
                     console.log('PICSART_API_KEY missing; skipping upscaling');
@@ -1038,6 +1042,7 @@ async function processPicsartUpscaling(imagePath, upscaleFactor = 2) {
             console.log(`[Upscale] Converting to PNG using Sharp...`);
             const sharpStartTime = Date.now();
 
+            let finalBuffer;
             try {
                 const pngBuffer = await sharp(Buffer.from(imageResponse.data))
                     .png({ compressionLevel: 9 })
@@ -1048,6 +1053,7 @@ async function processPicsartUpscaling(imagePath, upscaleFactor = 2) {
                 console.log(`[Upscale] Sharp conversion completed in ${sharpDuration}ms, output: ${outputSizeMB}MB`);
 
                 fs.writeFileSync(outputPath, pngBuffer);
+                finalBuffer = pngBuffer;
                 console.log(`[Upscale] SUCCESS - Image saved to: ${outputPath}`);
             } catch (sharpError) {
                 console.error(`[Upscale] Sharp conversion failed:`, sharpError);
@@ -1055,14 +1061,16 @@ async function processPicsartUpscaling(imagePath, upscaleFactor = 2) {
                 console.error(`[Upscale] Attempting fallback: saving raw image data...`);
 
                 // Fallback: save the raw data without Sharp conversion
-                fs.writeFileSync(outputPath, Buffer.from(imageResponse.data));
+                const rawBuffer = Buffer.from(imageResponse.data);
+                fs.writeFileSync(outputPath, rawBuffer);
+                finalBuffer = rawBuffer;
                 console.log(`[Upscale] FALLBACK SUCCESS - Raw image saved to: ${outputPath}`);
             }
         } else {
             throw new Error('Unexpected Picsart response format: ' + JSON.stringify(response.data));
         }
 
-        return outputPath;
+        return { path: outputPath, buffer: finalBuffer };
 
     } catch (error) {
         console.error('[Upscale] ERROR occurred:', {
