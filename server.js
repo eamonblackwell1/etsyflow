@@ -1044,6 +1044,7 @@ async function processPicsartUpscaling(imagePath, upscaleFactor = 2) {
 
         const filename = `upscaled_${Date.now()}_${path.basename(imagePath)}`;
         const outputPath = path.join(processedDir, filename);
+        let finalBuffer; // Declare at function scope so it's available for return
 
         // Check if response contains an image URL instead of raw image data
         if (response.data && response.data.data && response.data.data.url) {
@@ -1063,8 +1064,6 @@ async function processPicsartUpscaling(imagePath, upscaleFactor = 2) {
             // Convert to PNG using sharp to ensure consistency
             console.log(`[Upscale] Converting to PNG using Sharp...`);
             const sharpStartTime = Date.now();
-
-            let finalBuffer;
             try {
                 const pngBuffer = await sharp(Buffer.from(imageResponse.data))
                     .png({ compressionLevel: 9 })
