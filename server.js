@@ -812,6 +812,7 @@ async function processImageWithNanoBanana(imageData) {
             // Step 2: Upscale the image using Picsart (optional)
             try {
                 if (PICSART_API_KEY) {
+                    console.log(`[${imageData.jobId}] PICSART_API_KEY detected, starting upscaling...`);
                     imageData.status = 'upscaling_image';
                     // Update job in memory
                     if (processingJobs.has(imageData.jobId)) {
@@ -831,9 +832,10 @@ async function processImageWithNanoBanana(imageData) {
                     if (upscaleResult.buffer) {
                         imageData.processedBuffer = upscaleResult.buffer;
                     }
-                    console.log('Upscaling successful');
+                    console.log(`[${imageData.jobId}] Upscaling successful`);
                 } else {
-                    console.log('PICSART_API_KEY missing; skipping upscaling');
+                    console.log(`[${imageData.jobId}] PICSART_API_KEY missing; skipping upscaling`);
+                    console.log(`[${imageData.jobId}] API Key check: PICSART_API_KEY=${PICSART_API_KEY ? 'SET' : 'NOT SET'}`);
                 }
             } catch (upscaleError) {
                 console.error('Upscaling failed:', upscaleError.message);
@@ -856,8 +858,14 @@ async function processImageWithNanoBanana(imageData) {
             }
 
             // Store final processed image buffer for Vercel compatibility
-            if (fs.existsSync(finalProcessedPath)) {
+            // Only read from file system if we haven't already stored the buffer from upscaling
+            if (!imageData.processedBuffer && fs.existsSync(finalProcessedPath)) {
+                console.log(`[Pipeline] Reading final buffer from file system: ${finalProcessedPath}`);
                 imageData.processedBuffer = fs.readFileSync(finalProcessedPath);
+            } else if (imageData.processedBuffer) {
+                console.log(`[Pipeline] Using upscaled buffer already in memory (${(imageData.processedBuffer.length / 1024 / 1024).toFixed(2)}MB)`);
+            } else {
+                console.warn(`[Pipeline] WARNING: No buffer available and file does not exist: ${finalProcessedPath}`);
             }
 
             return { processedPath: finalProcessedPath };
