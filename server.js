@@ -803,7 +803,10 @@ async function processImageWithNanoBanana(imageData) {
                 }
             } catch (bgError) {
                 console.error('Background removal failed:', bgError.message);
-                pipelineErrors.push(`Background removal: ${bgError.message}`);
+                // Only count as error if background removal was requested
+                if (imageData.removeBg) {
+                    pipelineErrors.push(`Background removal: ${bgError.message}`);
+                }
                 // Continue with original Gemini image
                 bgRemovedPath = geminiPath;
                 finalProcessedPath = geminiPath;
@@ -844,17 +847,28 @@ async function processImageWithNanoBanana(imageData) {
             }
             
             // Update final status based on what succeeded
-            if (pipelineErrors.length === 0) {
-                console.log(`Complete pipeline processing finished: ${finalProcessedPath}`);
+            // Filter errors to only include requested steps
+            const relevantErrors = pipelineErrors.filter(err => {
+                // If background removal wasn't requested, don't count bg removal errors
+                if (err.includes('Background removal') && !imageData.removeBg) {
+                    return false;
+                }
+                return true;
+            });
+
+            if (relevantErrors.length === 0) {
+                console.log(`[${imageData.jobId}] Complete pipeline processing finished: ${finalProcessedPath}`);
                 imageData.status = 'pipeline_complete';
-            } else if (pipelineErrors.length === 1) {
-                console.log(`Partial pipeline success with fallback: ${finalProcessedPath}`);
+            } else if (relevantErrors.length === 1) {
+                console.log(`[${imageData.jobId}] Partial pipeline success with fallback: ${finalProcessedPath}`);
+                console.log(`[${imageData.jobId}] Pipeline errors:`, relevantErrors);
                 imageData.status = 'partial_pipeline_success';
-                imageData.pipelineErrors = pipelineErrors;
+                imageData.pipelineErrors = relevantErrors;
             } else {
-                console.log(`Pipeline failed, using Gemini output: ${finalProcessedPath}`);
+                console.log(`[${imageData.jobId}] Pipeline failed, using Gemini output: ${finalProcessedPath}`);
+                console.log(`[${imageData.jobId}] Pipeline errors:`, relevantErrors);
                 imageData.status = 'picsart_failed_fallback';
-                imageData.pipelineErrors = pipelineErrors;
+                imageData.pipelineErrors = relevantErrors;
             }
 
             // Store final processed image buffer for Vercel compatibility
