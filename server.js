@@ -988,73 +988,112 @@ async function processPicsartBackgroundRemoval(imagePath) {
 
 async function processPicsartUpscaling(imagePath, upscaleFactor = 2) {
     try {
-        console.log(`Upscaling image: ${imagePath} with factor ${upscaleFactor}`);
-        
+        console.log(`[Upscale] Starting: ${imagePath} with factor ${upscaleFactor}`);
+        console.log(`[Upscale] Platform: ${process.env.VERCEL ? 'Vercel' : 'Local'}, Node: ${process.version}`);
+
         // Create form data for file upload - minimal parameters
         const form = new FormData();
         form.append('image', fs.createReadStream(imagePath));
         form.append('upscale_factor', upscaleFactor.toString());
-        
+
+        console.log(`[Upscale] Calling Picsart API...`);
+        const apiStartTime = Date.now();
         const response = await axios.post('https://api.picsart.io/tools/1.0/upscale', form, {
             headers: {
                 'X-Picsart-API-Key': PICSART_API_KEY,
                 'accept': 'application/json',
                 ...form.getHeaders()
-            }
+            },
+            timeout: 30000 // 30 second timeout
         });
-        
-        console.log('Picsart upscaling response:', response.data);
-        
+
+        const apiDuration = Date.now() - apiStartTime;
+        console.log(`[Upscale] Picsart API responded in ${apiDuration}ms:`, response.data);
+
         // Save the upscaled image
         const processedDir = PROCESSED_DIR;
         if (!fs.existsSync(processedDir)) {
             fs.mkdirSync(processedDir, { recursive: true });
         }
-        
+
         const filename = `upscaled_${Date.now()}_${path.basename(imagePath)}`;
         const outputPath = path.join(processedDir, filename);
-        
+
         // Check if response contains an image URL instead of raw image data
         if (response.data && response.data.data && response.data.data.url) {
+            console.log(`[Upscale] Downloading from URL: ${response.data.data.url}`);
+            const downloadStartTime = Date.now();
+
             // Download the image from the URL
             const imageResponse = await axios.get(response.data.data.url, {
-                responseType: 'arraybuffer'
+                responseType: 'arraybuffer',
+                timeout: 30000
             });
-            
+
+            const downloadDuration = Date.now() - downloadStartTime;
+            const downloadSizeMB = (imageResponse.data.length / (1024 * 1024)).toFixed(2);
+            console.log(`[Upscale] Downloaded ${downloadSizeMB}MB in ${downloadDuration}ms`);
+
             // Convert to PNG using sharp to ensure consistency
-            const pngBuffer = await sharp(Buffer.from(imageResponse.data))
-                .png({ compressionLevel: 9 })
-                .toBuffer();
-                
-            fs.writeFileSync(outputPath, pngBuffer);
+            console.log(`[Upscale] Converting to PNG using Sharp...`);
+            const sharpStartTime = Date.now();
+
+            try {
+                const pngBuffer = await sharp(Buffer.from(imageResponse.data))
+                    .png({ compressionLevel: 9 })
+                    .toBuffer();
+
+                const sharpDuration = Date.now() - sharpStartTime;
+                const outputSizeMB = (pngBuffer.length / (1024 * 1024)).toFixed(2);
+                console.log(`[Upscale] Sharp conversion completed in ${sharpDuration}ms, output: ${outputSizeMB}MB`);
+
+                fs.writeFileSync(outputPath, pngBuffer);
+                console.log(`[Upscale] SUCCESS - Image saved to: ${outputPath}`);
+            } catch (sharpError) {
+                console.error(`[Upscale] Sharp conversion failed:`, sharpError);
+                console.error(`[Upscale] Sharp error stack:`, sharpError.stack);
+                console.error(`[Upscale] Attempting fallback: saving raw image data...`);
+
+                // Fallback: save the raw data without Sharp conversion
+                fs.writeFileSync(outputPath, Buffer.from(imageResponse.data));
+                console.log(`[Upscale] FALLBACK SUCCESS - Raw image saved to: ${outputPath}`);
+            }
         } else {
             throw new Error('Unexpected Picsart response format: ' + JSON.stringify(response.data));
         }
-        
-        console.log(`Image upscaled successfully: ${outputPath}`);
+
         return outputPath;
-        
+
     } catch (error) {
-        console.error('Picsart upscaling error:', error);
-        
+        console.error('[Upscale] ERROR occurred:', {
+            message: error.message,
+            code: error.code,
+            stack: error.stack,
+            response: error.response ? {
+                status: error.response.status,
+                statusText: error.response.statusText,
+                data: error.response.data
+            } : undefined
+        });
+
         // Provide more specific error information for debugging
         let errorMessage = 'Image upscaling failed';
         if (error.response) {
             // HTTP error response from API
             errorMessage += ` (HTTP ${error.response.status})`;
             if (error.response.data) {
-                console.error('API Error Response:', error.response.data);
+                console.error('[Upscale] API Error Response:', error.response.data);
                 // Decode buffer if it's a buffer
                 if (Buffer.isBuffer(error.response.data)) {
                     const errorText = error.response.data.toString('utf8');
-                    console.error('Decoded API Error:', errorText);
+                    console.error('[Upscale] Decoded API Error:', errorText);
                     try {
                         const errorJson = JSON.parse(errorText);
                         if (errorJson.detail) {
                             errorMessage += `: ${errorJson.detail}`;
                         }
                     } catch (parseError) {
-                        console.error('Could not parse error JSON:', parseError);
+                        console.error('[Upscale] Could not parse error JSON:', parseError);
                     }
                 }
             }
@@ -1063,7 +1102,7 @@ async function processPicsartUpscaling(imagePath, upscaleFactor = 2) {
         } else if (error.message) {
             errorMessage += `: ${error.message}`;
         }
-        
+
         throw new Error(errorMessage);
     }
 }
